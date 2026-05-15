@@ -73,7 +73,8 @@ const buildPortalState = (user: UserRecord) => {
         bundleCreditsRemaining: dto.bundleCreditsRemaining,
         permanentCredits: dto.permanentCredits,
         creditsExpiresAt: dto.creditsExpiresAt,
-        packageType: user.packageType ?? null,
+        bundleCreditsExpiresAt: dto.bundleCreditsExpiresAt,
+        packageType: dto.packageType ?? null,
         memberSince: dto.createdAt,
         createdAt: dto.createdAt,
     };
@@ -187,16 +188,18 @@ export const getPortalCredits = async (req: Request, res: Response, next: NextFu
 
             user = await expireCreditsIfNeeded(user as UserRecord) ?? user;
             const u = user as UserRecord;
+            const dto = UserResponseDTO.fromModel(u);
             const bundleRemaining = Math.max(0, u.bundleCreditsRemaining ?? 0);
             const capacity = packageCapacityForUser(u.packageType ?? null);
             const used = capacity !== null ? Math.max(0, capacity - bundleRemaining) : null;
 
             return successResponse('Credits retrieved successfully', {
-                credits: u.credits ?? 0,
+                credits: dto.credits,
                 bundleCreditsRemaining: bundleRemaining,
-                permanentCredits: Math.max(0, (u.credits ?? 0) - bundleRemaining),
-                packageType: u.packageType ?? null,
-                creditsExpiresAt: u.creditsExpiresAt?.toISOString() ?? null,
+                permanentCredits: dto.permanentCredits,
+                packageType: dto.packageType,
+                creditsExpiresAt: dto.creditsExpiresAt,
+                bundleCreditsExpiresAt: dto.bundleCreditsExpiresAt,
                 packageCapacity: capacity,
                 creditsUsedInPackage: used,
             });

@@ -18,6 +18,8 @@ import type { PaymentRecord } from '../../types/Payment.js';
 import type { PressReleaseRecord } from '../../types/PressRelease.js';
 import { successResponse } from '../../utils/response.util.js';
 import { toObjectId } from '../../utils/mongo.util.js';
+import { CREDIT_WALLET_EXPIRY_MONTHS, walletGrantExpiresAt } from '../../utils/creditLots.util.js';
+import type { UserCreditLotKind } from '../../types/User.js';
 
 const paymentRepository = new PaymentRepository();
 const pressReleaseRepository = new PressReleaseRepository();
@@ -40,16 +42,9 @@ const getPackageName = (release: PressReleaseRecord) => {
     return release.featuredUpgrade ? `${baseName} + Featured Placement` : baseName;
 };
 
-const getCreditsExpiryDate = (packageId: PressReleaseRecord['packageId']) => {
-    if (packageId !== 'bundle') {
-        return null;
-    }
-
-    const expiresAt = new Date();
-    expiresAt.setMonth(expiresAt.getMonth() + 6);
-
-    return expiresAt;
-};
+const walletCreditKindForPackage = (packageId: PressReleaseRecord['packageId'] | PaymentRecord['packageId']): UserCreditLotKind => (
+    packageId === 'bundle' ? 'bundle' : 'single'
+);
 
 /** Short unique order reference (8 chars, no ambiguous 0/O/1/I). Random from CSPRNG. */
 const ORDER_NUMBER_LENGTH = 8;
@@ -147,7 +142,7 @@ const sendPaymentEmails = async (payment: PaymentRecord, release: PressReleaseRe
         : creditsAdded > 0
             ? `<p><strong>Submission:</strong> This purchase covers this press release (no additional wallet credits).</p>`
             : ''}
-                ${release.packageId === 'bundle' ? `<p><strong>Expiry:</strong> ${new Date(Date.now() + 183 * 24 * 60 * 60 * 1000).toLocaleDateString()}</p>` : ''}
+                ${walletBonusCredits > 0 ? `<p><strong>Credit validity:</strong> Wallet credits expire ${CREDIT_WALLET_EXPIRY_MONTHS} months after they are added to your account.</p>` : ''}
                 <p>We typically review within 48 hours. You can track status in <a href="${portalUrl}">My portal</a>.</p>
             </div>
         `,
@@ -264,8 +259,8 @@ const finalizePaidSubmission = async (payment: PaymentRecord) => {
         await userRepository.addCredits(
             release.submitterId,
             walletCreditsToAdd,
-            release.packageId === 'bundle' ? 'bundle' : 'single',
-            getCreditsExpiryDate(release.packageId),
+            walletCreditKindForPackage(release.packageId),
+            walletGrantExpiresAt(),
         );
     }
 
@@ -312,8 +307,8 @@ const finalizeSessionAfterCreditPurchase = async (
             await userRepository.addCredits(
                 submitterId,
                 creditsAdded,
-                payment.packageId === 'bundle' ? 'bundle' : 'single',
-                getCreditsExpiryDate(payment.packageId),
+                walletCreditKindForPackage(payment.packageId),
+                walletGrantExpiresAt(),
             );
         }
 
@@ -332,8 +327,8 @@ const finalizeSessionAfterCreditPurchase = async (
         await userRepository.addCredits(
             submitterId,
             walletCreditsToAdd,
-            payment.packageId === 'bundle' ? 'bundle' : 'single',
-            getCreditsExpiryDate(payment.packageId),
+            walletCreditKindForPackage(payment.packageId),
+            walletGrantExpiresAt(),
         );
     }
 
@@ -444,8 +439,8 @@ const finalizeCreditOnlyPurchase = async (payment: PaymentRecord, submitterId: s
         await userRepository.addCredits(
             submitterId,
             creditsAdded,
-            payment.packageId === 'bundle' ? 'bundle' : 'single',
-            getCreditsExpiryDate(payment.packageId),
+            walletCreditKindForPackage(payment.packageId),
+            walletGrantExpiresAt(),
         );
     }
 
@@ -454,9 +449,7 @@ const finalizeCreditOnlyPurchase = async (payment: PaymentRecord, submitterId: s
     const amount = (payment.amountCents / 100).toFixed(2);
     const paymentId = payment._id;
     const orderNumber = payment.orderNumber;
-    const bundleExpiryHtml = payment.packageId === 'bundle'
-        ? `<p><strong>Expiry:</strong> ${new Date(Date.now() + 183 * 24 * 60 * 60 * 1000).toLocaleDateString()}</p>`
-        : '';
+    const creditWalletExpiryHtml = `<p><strong>Credit validity:</strong> Each wallet credit expires ${CREDIT_WALLET_EXPIRY_MONTHS} months after it is added to your account.</p>`;
 
     scheduleBackgroundEmail('credit-only-purchase-confirmation', async () => {
         const latest = await paymentRepository.findById(paymentId);
@@ -476,7 +469,7 @@ const finalizeCreditOnlyPurchase = async (payment: PaymentRecord, submitterId: s
                 ${emailOrderNumberHtml(orderNumber)}
                 <p><strong>Release credits added:</strong> ${creditsAdded} credit${creditsAdded === 1 ? '' : 's'}</p>
                 <p><strong>Amount Paid:</strong> $${amount}</p>
-                ${bundleExpiryHtml}
+                ${creditWalletExpiryHtml}
                 <p>Each submission uses one credit. Start here: <a href="${submitUrl}">Submit your press release</a>.</p>
                 <p><a href="${dashboardUrl}">My portal</a></p>
             </div>

@@ -1,7 +1,13 @@
 import { ObjectId, type Filter, type OptionalUnlessRequiredId, type UpdateFilter } from 'mongodb';
 import { getDb } from '../lib/mongodb.js';
 import { invalidatePortalUserCache, isRedisCacheEnabled } from '../services/apiCache.service.js';
-import type { UserRecord, UserRole } from '../types/User.js';
+import type { UserCreditLot, UserCreditLotKind, UserRecord, UserRole } from '../types/User.js';
+import {
+    activeCreditLotsSorted,
+    buildLegacyMigrationLots,
+    deriveCreditFieldsFromLots,
+    walletGrantExpiresAt,
+} from '../utils/creditLots.util.js';
 import { toObjectId } from '../utils/mongo.util.js';
 
 type CreateUserPayload = {
@@ -15,6 +21,7 @@ type CreateUserPayload = {
     credits?: number;
     creditsExpiresAt?: Date | null;
     bundleCreditsRemaining?: number;
+    creditLots?: UserCreditLot[];
     packageType?: UserRecord['packageType'];
     journalistProfile?: UserRecord['journalistProfile'];
 };
@@ -132,6 +139,7 @@ export class UserRepository {
             credits: userData.credits ?? 0,
             bundleCreditsRemaining: userData.bundleCreditsRemaining ?? 0,
             creditsExpiresAt: userData.creditsExpiresAt ?? null,
+            creditLots: userData.creditLots ?? [],
             packageType: userData.packageType ?? null,
             journalistProfile: userData.journalistProfile ?? null,
             createdAt: now,
@@ -164,6 +172,7 @@ export class UserRepository {
         if (userData.credits !== undefined) set.credits = userData.credits;
         if (userData.bundleCreditsRemaining !== undefined) set.bundleCreditsRemaining = userData.bundleCreditsRemaining;
         if (userData.creditsExpiresAt !== undefined) set.creditsExpiresAt = userData.creditsExpiresAt;
+        if (userData.creditLots !== undefined) set.creditLots = userData.creditLots;
         if (userData.packageType !== undefined) set.packageType = userData.packageType;
         if (userData.journalistProfile !== undefined) set.journalistProfile = userData.journalistProfile;
         if (userData.passwordResetToken !== undefined) set.passwordResetToken = userData.passwordResetToken;
@@ -217,35 +226,28 @@ export class UserRepository {
     }
 
     /**
-     * Removes expired 3-Release Package wallet credits only; leaves other credits untouched.
+     * Strips expired legacy bundle wallet fields before first migration to `creditLots`.
+     * No-op when `creditLots` is already populated.
      */
-    async applyBundleCreditExpiry(id: string | ObjectId): Promise<UserRecord | null> {
-        const objectId = toObjectId(id);
-
-        if (!objectId) {
-            return null;
-        }
-
-        await this.migrateLegacyBundleCreditsIfNeeded(objectId);
-
+    private async legacyExpireBundleWalletOnly(objectId: ObjectId): Promise<void> {
         const user = await this.findById(objectId);
 
-        if (!user) {
-            return null;
+        if (!user || (user.creditLots && user.creditLots.length > 0)) {
+            return;
         }
 
         const bundleRemaining = user.bundleCreditsRemaining ?? 0;
         const exp = user.creditsExpiresAt;
 
         if (bundleRemaining <= 0 || !exp || exp > new Date()) {
-            return user;
+            return;
         }
 
         const strip = Math.min(bundleRemaining, user.credits ?? 0);
         const nextCredits = Math.max(0, (user.credits ?? 0) - strip);
         const nextPackageType: UserRecord['packageType'] = nextCredits > 0 ? 'single' : null;
 
-        const updated = await collection().findOneAndUpdate(
+        await collection().findOneAndUpdate(
             { _id: objectId },
             {
                 $set: {
@@ -254,6 +256,29 @@ export class UserRepository {
                     creditsExpiresAt: null,
                     packageType: nextPackageType,
                     updatedAt: new Date(),
+                },
+            },
+        );
+
+        if (isRedisCacheEnabled()) {
+            await invalidatePortalUserCache(objectId.toHexString());
+        }
+    }
+
+    private async persistCreditLots(objectId: ObjectId, lots: UserCreditLot[]): Promise<UserRecord | null> {
+        const now = new Date();
+        const derived = deriveCreditFieldsFromLots(lots, now);
+
+        const updated = await collection().findOneAndUpdate(
+            { _id: objectId },
+            {
+                $set: {
+                    creditLots: lots,
+                    credits: derived.credits,
+                    bundleCreditsRemaining: derived.bundleCreditsRemaining,
+                    creditsExpiresAt: derived.creditsExpiresAt,
+                    packageType: derived.packageType,
+                    updatedAt: now,
                 },
             },
             { returnDocument: 'after', projection: { password: 0 } },
@@ -266,7 +291,65 @@ export class UserRepository {
         return updated ?? this.findById(objectId);
     }
 
-    async addCredits(id: string | ObjectId, credits: number, packageType: UserRecord['packageType'], expiresAt: Date | null) {
+    /** Builds `creditLots` from legacy denormalized fields when missing. */
+    private async ensureCreditLotsMigrated(objectId: ObjectId): Promise<void> {
+        const user = await this.findById(objectId);
+
+        if (!user) {
+            return;
+        }
+
+        if (user.creditLots && user.creditLots.length > 0) {
+            return;
+        }
+
+        await this.migrateLegacyBundleCreditsIfNeeded(objectId);
+        await this.legacyExpireBundleWalletOnly(objectId);
+
+        const u2 = await this.findById(objectId);
+
+        if (!u2) {
+            return;
+        }
+
+        const lots = buildLegacyMigrationLots(u2);
+        await this.persistCreditLots(objectId, lots);
+    }
+
+    /**
+     * Drops expired credit lots and syncs denormalized counters. Call on portal load / before mutating wallet.
+     */
+    async applyBundleCreditExpiry(id: string | ObjectId): Promise<UserRecord | null> {
+        const objectId = toObjectId(id);
+
+        if (!objectId) {
+            return null;
+        }
+
+        await this.ensureCreditLotsMigrated(objectId);
+
+        const user = await this.findById(objectId);
+
+        if (!user) {
+            return null;
+        }
+
+        const now = new Date();
+        const nextLots = activeCreditLotsSorted(user.creditLots, now);
+
+        return this.persistCreditLots(objectId, nextLots);
+    }
+
+    /**
+     * Adds wallet credits as a new lot. Each lot expires on `expiresAt` (typically six months from grant).
+     * @param kind `bundle` = 3-Release wallet; `single` = pricing / release top-ups; `admin` = manual grant.
+     */
+    async addCredits(
+        id: string | ObjectId,
+        credits: number,
+        kind: UserCreditLotKind,
+        expiresAt: Date,
+    ): Promise<UserRecord | null> {
         const objectId = toObjectId(id);
 
         if (!objectId || !Number.isFinite(credits) || credits <= 0) {
@@ -275,105 +358,24 @@ export class UserRepository {
 
         await this.applyBundleCreditExpiry(objectId);
 
-        const now = new Date();
+        const user = await this.findById(objectId);
 
-        let updated: UserRecord | null = null;
-
-        if (expiresAt) {
-            updated = await collection().findOneAndUpdate(
-                { _id: objectId },
-                [
-                    {
-                        $set: {
-                            credits: { $add: [{ $ifNull: ['$credits', 0] }, credits] },
-                            bundleCreditsRemaining: { $add: [{ $ifNull: ['$bundleCreditsRemaining', 0] }, credits] },
-                            creditsExpiresAt: {
-                                $cond: {
-                                    if: {
-                                        $or: [
-                                            { $lte: [{ $ifNull: ['$bundleCreditsRemaining', 0] }, 0] },
-                                            { $eq: ['$creditsExpiresAt', null] },
-                                            { $lte: ['$creditsExpiresAt', { $literal: now }] },
-                                        ],
-                                    },
-                                    then: { $literal: expiresAt },
-                                    else: { $max: ['$creditsExpiresAt', { $literal: expiresAt }] },
-                                },
-                            },
-                            packageType: 'bundle',
-                            updatedAt: { $literal: now },
-                        },
-                    },
-                ],
-                { returnDocument: 'after', projection: { password: 0 } },
-            );
-        } else {
-            updated = await collection().findOneAndUpdate(
-                { _id: objectId },
-                [
-                    {
-                        $set: {
-                            credits: { $add: [{ $ifNull: ['$credits', 0] }, credits] },
-                            packageType: {
-                                $cond: [
-                                    { $gt: [{ $ifNull: ['$bundleCreditsRemaining', 0] }, 0] },
-                                    'bundle',
-                                    packageType ?? 'single',
-                                ],
-                            },
-                            updatedAt: { $literal: now },
-                        },
-                    },
-                ],
-                { returnDocument: 'after', projection: { password: 0 } },
-            );
-        }
-
-        if (isRedisCacheEnabled() && updated) {
-            await invalidatePortalUserCache(objectId.toHexString());
-        }
-
-        return updated;
-    }
-
-    async incrementCreditsByDelta(id: string | ObjectId, delta: number) {
-        const objectId = toObjectId(id);
-
-        if (!objectId || !Number.isFinite(delta) || delta <= 0) {
+        if (!user) {
             return null;
         }
 
-        await this.applyBundleCreditExpiry(objectId);
-
         const now = new Date();
-        const updated = await collection().findOneAndUpdate(
-            { _id: objectId },
-            [
-                {
-                    $set: {
-                        credits: { $add: [{ $ifNull: ['$credits', 0] }, delta] },
-                        packageType: {
-                            $cond: [
-                                { $gt: [{ $ifNull: ['$bundleCreditsRemaining', 0] }, 0] },
-                                'bundle',
-                                'single',
-                            ],
-                        },
-                        updatedAt: { $literal: now },
-                    },
-                },
-            ],
-            { returnDocument: 'after', projection: { password: 0 } },
-        );
+        const lots = activeCreditLotsSorted(user.creditLots, now);
+        lots.push({ credits, expiresAt, kind });
 
-        if (isRedisCacheEnabled() && updated) {
-            await invalidatePortalUserCache(objectId.toHexString());
-        }
-
-        return updated;
+        return this.persistCreditLots(objectId, lots);
     }
 
-    /** Uses one bundle credit first when available, then non-expiring credits. */
+    async incrementCreditsByDelta(id: string | ObjectId, delta: number) {
+        return this.addCredits(id, delta, 'admin', walletGrantExpiresAt());
+    }
+
+    /** Consumes one credit from the non-expired lot with the soonest expiry. */
     async consumeCredit(id: string | ObjectId) {
         const objectId = toObjectId(id);
 
@@ -383,62 +385,24 @@ export class UserRepository {
 
         await this.applyBundleCreditExpiry(objectId);
 
-        const now = new Date();
+        const user = await this.findById(objectId);
 
-        const updated = await collection().findOneAndUpdate(
-            {
-                _id: objectId,
-                credits: { $gt: 0 },
-            },
-            [
-                {
-                    $set: {
-                        credits: { $subtract: [{ $ifNull: ['$credits', 0] }, 1] },
-                        bundleCreditsRemaining: {
-                            $max: [
-                                0,
-                                {
-                                    $subtract: [
-                                        { $ifNull: ['$bundleCreditsRemaining', 0] },
-                                        {
-                                            $cond: [
-                                                { $gt: [{ $ifNull: ['$bundleCreditsRemaining', 0] }, 0] },
-                                                1,
-                                                0,
-                                            ],
-                                        },
-                                    ],
-                                },
-                            ],
-                        },
-                    },
-                },
-                {
-                    $set: {
-                        creditsExpiresAt: {
-                            $cond: [{ $eq: ['$bundleCreditsRemaining', 0] }, null, '$creditsExpiresAt'],
-                        },
-                        packageType: {
-                            $cond: [
-                                { $eq: ['$bundleCreditsRemaining', 0] },
-                                {
-                                    $cond: [{ $gt: ['$credits', 0] }, 'single', null],
-                                },
-                                'bundle',
-                            ],
-                        },
-                        updatedAt: { $literal: now },
-                    },
-                },
-            ],
-            { returnDocument: 'after', projection: { password: 0 } },
-        );
-
-        if (isRedisCacheEnabled() && updated) {
-            await invalidatePortalUserCache(objectId.toHexString());
+        if (!user || (user.credits ?? 0) <= 0) {
+            return null;
         }
 
-        return updated;
+        const now = new Date();
+        const sorted = activeCreditLotsSorted(user.creditLots, now);
+
+        if (sorted.length === 0) {
+            return null;
+        }
+
+        const nextLots = sorted
+            .map((lot, index) => (index === 0 ? { ...lot, credits: lot.credits - 1 } : lot))
+            .filter((lot) => lot.credits > 0);
+
+        return this.persistCreditLots(objectId, nextLots);
     }
 
     async count(role?: UserRole) {

@@ -3,6 +3,15 @@ import type { ObjectId } from 'mongodb';
 export const USER_ROLES = ['admin', 'super_admin', 'submitter', 'journalist'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
+export type UserCreditLotKind = 'bundle' | 'single' | 'admin';
+
+/** One grant of wallet credits; each lot expires independently (default six months from issue). */
+export type UserCreditLot = {
+    credits: number;
+    expiresAt: Date;
+    kind: UserCreditLotKind;
+};
+
 export type JournalistProfile = {
     mediaOutlet: string | null;
     location: string | null;
@@ -24,9 +33,14 @@ export type UserRecord = {
     phone: string | null;
     organization: string | null;
     credits: number;
-    /** Credits from the 3-Release Package wallet; subject to `creditsExpiresAt`. */
+    /**
+     * Remaining credits per grant, each with its own expiry. When present, this is the source of truth;
+     * `credits`, `bundleCreditsRemaining`, `creditsExpiresAt`, and `packageType` are kept in sync.
+     */
+    creditLots?: UserCreditLot[];
+    /** Denormalized: credits in lots with `kind: 'bundle'` (3-Release package wallet). */
     bundleCreditsRemaining?: number;
-    /** Applies only to `bundleCreditsRemaining` (not to single-purchase / admin credits). */
+    /** Denormalized: earliest expiry among active lots (for UX / warnings). */
     creditsExpiresAt: Date | null;
     packageType: 'single' | 'bundle' | null;
     journalistProfile: JournalistProfile | null;

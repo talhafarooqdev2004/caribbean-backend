@@ -163,6 +163,7 @@ export const login = async (
                 bundleCreditsRemaining: refreshed.bundleCreditsRemaining,
                 creditsExpiresAt: refreshed.creditsExpiresAt,
                 packageType: refreshed.packageType,
+                creditLots: refreshed.creditLots,
                 updatedAt: refreshed.updatedAt,
             });
         }
