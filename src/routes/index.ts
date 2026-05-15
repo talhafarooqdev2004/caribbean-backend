@@ -1,0 +1,42 @@
+import express from 'express';
+import authRoutes from './auth.routes.js';
+import userRoutes from './user.routes.js';
+import submitterRoutes from './submitter.routes.js';
+import mediaSignupRoutes from './mediaSignup.routes.js';
+import pressReleaseRoutes from './pressRelease.routes.js';
+import paymentRoutes from './payment.routes.js';
+import paymentGatewayRoutes from './paymentGateway.routes.js';
+import appConfigRoutes from './appConfig.routes.js';
+import contactMessageRoutes from './contactMessage.routes.js';
+import emailDigestRoutes from './emailDigest.routes.js';
+import siteAccessRoutes from './siteAccess.routes.js';
+import webhookRoutes from './webhook.routes.js';
+import adminAnalyticsRoutes from './adminAnalytics.routes.js';
+import adminSiteAccessRoutes from './adminSiteAccess.routes.js';
+import adminDigestSettingsRoutes from './adminDigestSettings.routes.js';
+import adminPaymentModeRoutes from './adminPaymentMode.routes.js';
+import adminPressReleaseRoutes from './adminPressRelease.routes.js';
+
+const router = express.Router();
+
+router.use('/site-access', siteAccessRoutes);
+router.use('/auth', authRoutes);
+router.use('/user', submitterRoutes);
+router.use('/admin/users', userRoutes);
+router.use('/admin/analytics', adminAnalyticsRoutes);
+router.use('/admin/digest-settings', adminDigestSettingsRoutes);
+router.use('/admin/site-access', adminSiteAccessRoutes);
+router.use('/admin/settings/payment-mode', adminPaymentModeRoutes);
+router.use('/admin/press-releases', adminPressReleaseRoutes);
+router.use('/media-signups', mediaSignupRoutes);
+router.use('/admin/media-signups', mediaSignupRoutes);
+router.use('/press-releases', pressReleaseRoutes);
+router.use('/payments', paymentRoutes);
+router.use('/admin/payment-gateways', paymentGatewayRoutes);
+router.use('/admin/app-configs', appConfigRoutes);
+router.use('/contact-messages', contactMessageRoutes);
+router.use('/admin/contact-messages', contactMessageRoutes);
+router.use('/admin/email-digests', emailDigestRoutes);
+router.use('/webhooks', webhookRoutes);
+
+export default router;
