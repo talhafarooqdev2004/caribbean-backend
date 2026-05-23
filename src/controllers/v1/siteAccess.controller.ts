@@ -6,6 +6,7 @@ import { successResponse } from '../../utils/response.util.js';
 export const getPublicSiteAccess = async (_req: Request, res: Response, next: NextFunction) => {
     try {
         const data = await getSiteIpAllowlistPublic();
+        res.setHeader('Cache-Control', 'private, no-cache, no-store, max-age=0, must-revalidate');
         res.status(HTTP_STATUS.OK).json(successResponse('Site access policy retrieved', data));
     } catch (error) {
         next(error);

@@ -11,7 +11,7 @@ import { RegisterRequestDTO } from '../../../dtos/v1/Auth/RegisterRequestDTO.js'
 import { UserResponseDTO } from '../../../dtos/v1/Auth/UserResponseDTO.js';
 import { successResponse } from '../../../utils/response.util.js';
 import { generateToken } from '../../../utils/jwt.util.js';
-import { resolveAdminLoginEmail } from '../../../services/auth.service.js';
+import { ensureDefaultAdminUser, envAdminCredentialsMatch, getAdminEmail } from '../../../services/auth.service.js';
 import { emailService, scheduleBackgroundEmail } from '../../../services/email.service.js';
 import { logger } from '../../../utils/logger.util.js';
 
@@ -181,15 +181,16 @@ export const adminLogin = async (
 ) => {
     try {
         const emailOrUsername = req.body.email || req.body.username || '';
-        const user = await userRepository.findByEmail(resolveAdminLoginEmail(emailOrUsername));
 
-        if (!user?.password || user.role !== 'admin') {
+        if (!envAdminCredentialsMatch(emailOrUsername, req.body.password)) {
             throw new ApiError(HTTP_STATUS.UNAUTHORIZED, 'Invalid credentials');
         }
 
-        const passwordValid = await bcrypt.compare(req.body.password, user.password);
+        await ensureDefaultAdminUser();
 
-        if (!passwordValid) {
+        const user = await userRepository.findByEmail(getAdminEmail());
+
+        if (!user || user.role !== 'admin') {
             throw new ApiError(HTTP_STATUS.UNAUTHORIZED, 'Invalid credentials');
         }
 

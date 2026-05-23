@@ -1,7 +1,9 @@
 import express from 'express';
 import {
     approveRelease,
+    createRelease,
     rejectRelease,
+    updateActive,
     updateFeature,
     updateRelease,
     updateReleaseFiles,
@@ -9,11 +11,24 @@ import {
 import { authMiddleware, authorize } from '../middlewares/auth.middleware.js';
 import { apiLimiter } from '../middlewares/rateLimiter.middleware.js';
 import { pressReleaseUpload } from '../middlewares/upload.middleware.js';
+import { validate } from '../middlewares/validate.middleware.js';
+import { AdminPressReleaseCreateSchema } from '../schemas/pressRelease.schema.js';
 
 const router = express.Router();
 
 router.use(authMiddleware, authorize('admin'));
+router.post(
+    '/',
+    apiLimiter,
+    pressReleaseUpload.fields([
+        { name: 'coverPhoto', maxCount: 1 },
+        { name: 'document', maxCount: 1 },
+    ]),
+    validate(AdminPressReleaseCreateSchema),
+    createRelease,
+);
 router.put('/:id/feature', apiLimiter, updateFeature);
+router.put('/:id/active', apiLimiter, updateActive);
 router.put(
     '/:id/files',
     apiLimiter,

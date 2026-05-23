@@ -91,6 +91,7 @@ export const sendJournalistDigest = async (cadence: 'daily' | '3x-weekly'): Prom
         pressReleaseRepository.findAll({
             status: 'approved',
             paymentStatus: 'paid',
+            isActive: true,
             sort: 'featuredFirst',
             limit: DIGEST_RELEASE_LIMIT,
         }),

@@ -81,6 +81,11 @@ export const PressReleaseStoreSchema = z.object({
     useExistingCredit: z.preprocess(parseBoolean, z.boolean()).optional().default(true),
 });
 
+/** Admin panel: create a release without credits or payment (saved as paid + pending review). */
+export const AdminPressReleaseCreateSchema = PressReleaseStoreSchema.omit({
+    useExistingCredit: true,
+});
+
 /** Same fields as press release store, without credit flags — staging only until payment succeeds. */
 export const CreditCheckoutSessionStoreSchema = PressReleaseStoreSchema.omit({
     useExistingCredit: true,
@@ -111,7 +116,12 @@ export const PressReleaseFeatureSchema = z.object({
     featured: z.coerce.boolean().optional(),
 });
 
+export const PressReleaseActiveSchema = z.object({
+    isActive: z.coerce.boolean(),
+});
+
 export type PressReleaseStoreInput = z.infer<typeof PressReleaseStoreSchema>;
+export type AdminPressReleaseCreateInput = z.infer<typeof AdminPressReleaseCreateSchema>;
 export type CreditCheckoutSessionStoreInput = z.infer<typeof CreditCheckoutSessionStoreSchema>;
 export type PressReleaseQueryInput = z.infer<typeof PressReleaseQuerySchema>;
 export type PressReleaseStatusInput = z.infer<typeof PressReleaseStatusSchema>;

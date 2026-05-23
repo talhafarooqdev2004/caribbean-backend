@@ -6,6 +6,7 @@ import { UserResponseDTO } from '../../../dtos/v1/Auth/UserResponseDTO.js';
 import { PressReleaseRepository } from '../../../repositories/pressRelease.repository.js';
 import { UserRepository } from '../../../repositories/user.repository.js';
 import type { AdminUserCreditsIncrementInput } from '../../../schemas/adminUserCredits.schema.js';
+import { AdminUserListQuerySchema } from '../../../schemas/adminList.schema.js';
 import { emailService } from '../../../services/email.service.js';
 import { successResponse } from '../../../utils/response.util.js';
 import { logger } from '../../../utils/logger.util.js';
@@ -13,16 +14,26 @@ import { logger } from '../../../utils/logger.util.js';
 const userRepository = new UserRepository();
 const pressReleaseRepository = new PressReleaseRepository();
 
-export const getAllUsers = async (_req: Request, res: Response, next: NextFunction) => {
+export const getAllUsers = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const users = await userRepository.findPortalMembers();
+        const query = AdminUserListQuerySchema.parse(req.query);
+        const [users, total] = await Promise.all([
+            userRepository.findPortalMembersPage(query.page, query.limit, query.search),
+            userRepository.countPortalMembers(query.search),
+        ]);
         const enrichedUsers = await Promise.all(users.map(async (user) => ({
             ...UserResponseDTO.fromModel(user),
             totalSubmissions: await pressReleaseRepository.countBySubmitter(user._id),
             digestSubscribed: Boolean(user.journalistProfile && user.journalistProfile.digestOptIn !== false),
         })));
+        const totalPages = Math.max(1, Math.ceil(total / query.limit));
 
-        res.status(HTTP_STATUS.OK).json(successResponse('Users retrieved successfully', enrichedUsers));
+        res.status(HTTP_STATUS.OK).json(successResponse('Users retrieved successfully', enrichedUsers, {
+            total,
+            page: query.page,
+            limit: query.limit,
+            totalPages,
+        }));
     } catch (error) {
         next(error);
     }

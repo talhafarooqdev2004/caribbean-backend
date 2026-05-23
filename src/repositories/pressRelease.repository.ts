@@ -20,6 +20,7 @@ export type PressReleaseQuery = {
     category?: string;
     island?: string;
     featured?: boolean;
+    isActive?: boolean;
     paymentStatus?: PaymentStatus;
     search?: string;
     sort?: 'newest' | 'oldest' | 'mostViewed' | 'featured' | 'featuredFirst' | 'adminQueue';
@@ -54,6 +55,13 @@ const buildPressReleaseFilter = (query: PressReleaseQuery): Filter<PressReleaseR
         }
     }
     if (query.featured !== undefined) filter.featured = query.featured;
+
+    if (query.isActive === true) {
+        filter.$or = [{ isActive: { $exists: false } }, { isActive: true }];
+    } else if (query.isActive === false) {
+        filter.isActive = false;
+    }
+
     if (query.paymentStatus) filter.paymentStatus = query.paymentStatus;
 
     if (query.dateRange && query.dateRange !== 'allTime') {
@@ -283,6 +291,7 @@ export class PressReleaseRepository {
             status,
             publishedAt: status === 'approved' ? new Date() : null,
             rejectionReason: status === 'rejected' ? rejectionReason || null : null,
+            ...(status === 'approved' ? { isActive: true } : {}),
         } as Partial<PressReleaseRecord>);
     }
 
@@ -300,8 +309,12 @@ export class PressReleaseRepository {
         return this.update(id, { featured });
     }
 
+    async setActive(id: string | ObjectId, isActive: boolean) {
+        return this.update(id, { isActive });
+    }
+
     isLivePublicRelease(release: PressReleaseRecord) {
-        return release.status === 'approved' && release.paymentStatus === 'paid';
+        return release.status === 'approved' && release.paymentStatus === 'paid' && release.isActive !== false;
     }
 
     async incrementViews(idOrSlug: string) {

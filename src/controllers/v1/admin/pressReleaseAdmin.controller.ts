@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { HTTP_STATUS, SUCCESS_MESSAGES } from '../../../config/constants.js';
 import { ApiError } from '../../../exceptions/ApiError.js';
 import { PressReleaseRepository } from '../../../repositories/pressRelease.repository.js';
+import { PressReleaseStoreRequestDTO } from '../../../dtos/v1/PressReleases/Store/PressReleaseStoreRequestDTO.js';
 import { PressReleaseResponseDTO } from '../../../dtos/v1/PressReleases/PressReleaseResponseDTO.js';
 import { successResponse } from '../../../utils/response.util.js';
 import { emailService, scheduleBackgroundEmail } from '../../../services/email.service.js';
@@ -37,9 +38,62 @@ const sendRejectionEmail = async (release, reason = '') => {
     });
 };
 
+export const createRelease = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const requestDto = new PressReleaseStoreRequestDTO({
+            ...req.body,
+            coverImagePath: getUploadedPath(req, 'coverPhoto'),
+            documentPath: getUploadedPath(req, 'document'),
+        });
+
+        await pressReleaseRepository.assertCanonicalSlugAvailable(requestDto.title);
+
+        const featuredUpgrade = Boolean(req.body.featuredUpgrade);
+        const featured = req.body.featured !== undefined ? Boolean(req.body.featured) : featuredUpgrade;
+
+        const release = await pressReleaseRepository.create({
+            ...requestDto.toPersistence(0),
+            submitterId: null,
+            status: 'pending',
+            paymentStatus: 'paid',
+            packageId: 'custom',
+            featuredUpgrade,
+            featured,
+        });
+
+        res.status(HTTP_STATUS.CREATED).json(successResponse(SUCCESS_MESSAGES.CREATED, PressReleaseResponseDTO.fromModel(release)));
+    } catch (error) {
+        next(error);
+    }
+};
+
 export const updateFeature = async (req: Request<{ id: string }>, res: Response, next: NextFunction) => {
     try {
         const release = await pressReleaseRepository.setFeatured(req.params.id, Boolean(req.body.featured));
+
+        if (!release) {
+            throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Press release not found');
+        }
+
+        res.status(HTTP_STATUS.OK).json(successResponse(SUCCESS_MESSAGES.UPDATED, PressReleaseResponseDTO.fromModel(release)));
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const updateActive = async (req: Request<{ id: string }>, res: Response, next: NextFunction) => {
+    try {
+        const existing = await pressReleaseRepository.findById(req.params.id);
+
+        if (!existing) {
+            throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Press release not found');
+        }
+
+        if (existing.status !== 'approved') {
+            throw new ApiError(HTTP_STATUS.UNPROCESSABLE_ENTITY, 'Only approved releases can be set active or inactive.');
+        }
+
+        const release = await pressReleaseRepository.setActive(req.params.id, Boolean(req.body.isActive));
 
         if (!release) {
             throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Press release not found');

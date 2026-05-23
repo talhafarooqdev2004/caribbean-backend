@@ -23,6 +23,8 @@ export const MediaSignupStatusSchema = z.object({
 
 export const MediaSignupQuerySchema = z.object({
     status: z.enum(MEDIA_SIGNUP_STATUSES).optional(),
+    page: z.coerce.number().int().min(1).max(500).optional().default(1),
+    limit: z.coerce.number().int().min(1).max(100).optional().default(8),
 });
 
 export type MediaSignupStoreInput = z.infer<typeof MediaSignupStoreSchema>;

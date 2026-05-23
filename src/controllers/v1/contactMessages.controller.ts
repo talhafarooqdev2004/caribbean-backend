@@ -7,6 +7,7 @@ import { ContactMessageRepository } from '../../repositories/contactMessage.repo
 import { MediaSignupRepository } from '../../repositories/mediaSignup.repository.js';
 import { UserRepository } from '../../repositories/user.repository.js';
 import type { ContactMessageStoreInput } from '../../schemas/contactMessage.schema.js';
+import { ContactMessageQuerySchema } from '../../schemas/adminList.schema.js';
 import { emailService, scheduleBackgroundEmail } from '../../services/email.service.js';
 import {
     enqueueMediaPortalInviteJob,
@@ -55,9 +56,14 @@ export const createContactMessage = async (
     }
 };
 
-export const getAllContactMessages = async (_req: Request, res: Response, next: NextFunction) => {
+export const getAllContactMessages = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const messages = await contactMessageRepository.findAll();
+        const query = ContactMessageQuerySchema.parse(req.query);
+        const excludeEmails = query.contactOnly ? await userRepository.getPortalMemberEmailsLowercase() : [];
+        const [messages, total] = await Promise.all([
+            contactMessageRepository.findAll(query.page, query.limit, excludeEmails),
+            contactMessageRepository.count(excludeEmails),
+        ]);
         const dtos = await Promise.all(messages.map(async (message) => {
             const linked = message.promotedMediaSignupId
                 ? await mediaSignupRepository.findById(message.promotedMediaSignupId)
@@ -65,8 +71,14 @@ export const getAllContactMessages = async (_req: Request, res: Response, next: 
 
             return ContactMessageResponseDTO.fromModel(message, linked);
         }));
+        const totalPages = Math.max(1, Math.ceil(total / query.limit));
 
-        res.status(HTTP_STATUS.OK).json(successResponse('Contact messages retrieved successfully', dtos));
+        res.status(HTTP_STATUS.OK).json(successResponse('Contact messages retrieved successfully', dtos, {
+            total,
+            page: query.page,
+            limit: query.limit,
+            totalPages,
+        }));
     } catch (error) {
         next(error);
     }

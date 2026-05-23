@@ -32,7 +32,7 @@ const userRepository = new UserRepository();
 const creditCheckoutSessionRepository = new CreditCheckoutSessionRepository();
 
 const isLivePublicPressRelease = (release: PressReleaseRecord) =>
-    release.status === 'approved' && release.paymentStatus === 'paid';
+    release.status === 'approved' && release.paymentStatus === 'paid' && release.isActive !== false;
 
 const canReadPressRelease = (release: PressReleaseRecord, user?: JwtPayload) => {
     if (user?.role === 'admin') {
@@ -165,6 +165,7 @@ export const getPublicPressReleases = async (
             ...query,
             status: 'approved' as const,
             paymentStatus: 'paid' as const,
+            isActive: true as const,
         };
         const stablePart = stableQueryKey(scopedQuery as unknown as Record<string, unknown>);
         const cacheKey = `${NEWSROOM_PUBLIC_LIST_CACHE_PREFIX}${stablePart}`;
@@ -210,7 +211,7 @@ export const getPressReleaseById = async (req: Request<{ id: string }>, res: Res
         const param = req.params.id;
         const cached = await readPublicPressReleaseDetailCache(param);
 
-        if (cached?.success && cached.data?.status === 'approved' && cached.data?.paymentStatus === 'paid') {
+        if (cached?.success && cached.data?.status === 'approved' && cached.data?.paymentStatus === 'paid' && (cached.data as { isActive?: boolean }).isActive !== false) {
             const idMatch = /^[a-fA-F0-9]{24}$/.test(param) ? cached.data.id === param : true;
             const slugMatch = !/^[a-fA-F0-9]{24}$/.test(param) ? cached.data.slug === param : true;
 

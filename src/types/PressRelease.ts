@@ -32,6 +32,8 @@ export type PressReleaseRecord = {
     packageId: PressReleasePackage;
     featuredUpgrade: boolean;
     featured: boolean;
+    /** When false, approved release is hidden from the public site. Defaults to true. */
+    isActive?: boolean;
     rejectionReason: string | null;
     amountCents: number;
     status: PressReleaseStatus;

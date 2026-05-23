@@ -48,6 +48,43 @@ export class UserRepository {
         }).toArray();
     }
 
+    async findPortalMembersPage(page = 1, limit = 100, search = '') {
+        const safeLimit = Math.min(Math.max(1, limit), 100);
+        const safePage = Math.max(1, page);
+        const skip = (safePage - 1) * safeLimit;
+        const filter: Filter<UserRecord> = { role: { $in: ['submitter', 'journalist'] } };
+        const term = search.trim();
+
+        if (term) {
+            filter.email = { $regex: escapeRegex(term), $options: 'i' };
+        }
+
+        return collection().find(filter, {
+            projection: { password: 0 },
+            sort: { createdAt: -1 },
+        }).skip(skip).limit(safeLimit).toArray();
+    }
+
+    async countPortalMembers(search = '') {
+        const filter: Filter<UserRecord> = { role: { $in: ['submitter', 'journalist'] } };
+        const term = search.trim();
+
+        if (term) {
+            filter.email = { $regex: escapeRegex(term), $options: 'i' };
+        }
+
+        return collection().countDocuments(filter);
+    }
+
+    async getPortalMemberEmailsLowercase() {
+        const users = await collection().find(
+            { role: { $in: ['submitter', 'journalist'] } },
+            { projection: { email: 1 } },
+        ).toArray();
+
+        return users.map((user) => user.email.trim().toLowerCase());
+    }
+
     async findPortalMembers() {
         return collection().find(
             { role: { $in: ['submitter', 'journalist'] } },

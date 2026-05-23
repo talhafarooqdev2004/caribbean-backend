@@ -18,13 +18,27 @@ const mediaSignupOnlyFilter = (): Filter<MediaSignupRecord> => ({
 });
 
 export class MediaSignupRepository {
-    async findAll(status?: MediaSignupStatus) {
+    async findAll(status?: MediaSignupStatus, page = 1, limit = 100) {
         const filter: Filter<MediaSignupRecord> = {
             ...mediaSignupOnlyFilter(),
             ...(status ? { status } : {}),
         };
+        const safeLimit = Math.min(Math.max(1, limit), 100);
+        const safePage = Math.max(1, page);
+        const skip = (safePage - 1) * safeLimit;
 
-        return collection().find(filter).sort({ createdAt: -1 }).toArray();
+        return collection().find(filter).sort({ createdAt: -1 }).skip(skip).limit(safeLimit).toArray();
+    }
+
+    async countStatusBreakdown() {
+        const [total, pending, approved, rejected] = await Promise.all([
+            this.count(),
+            this.count('pending'),
+            this.count('approved'),
+            this.count('rejected'),
+        ]);
+
+        return { total, pending, approved, rejected };
     }
 
     async findById(id: string | ObjectId) {

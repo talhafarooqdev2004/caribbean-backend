@@ -1,4 +1,4 @@
-import { ObjectId, type OptionalUnlessRequiredId } from 'mongodb';
+import { ObjectId, type Filter, type OptionalUnlessRequiredId } from 'mongodb';
 import { getDb } from '../lib/mongodb.js';
 import type { ContactMessageRecord } from '../types/ContactMessage.js';
 import { toObjectId } from '../utils/mongo.util.js';
@@ -7,9 +7,28 @@ type CreateContactMessagePayload = Omit<ContactMessageRecord, '_id' | 'status' |
 
 const collection = () => getDb().collection<ContactMessageRecord>('contact_messages');
 
+const buildListFilter = (excludeEmailsLower: string[] = []) => {
+    const filter: Filter<ContactMessageRecord> = {};
+
+    if (excludeEmailsLower.length > 0) {
+        filter.email = { $nin: excludeEmailsLower };
+    }
+
+    return filter;
+};
+
 export class ContactMessageRepository {
-    async findAll() {
-        return collection().find({}).sort({ createdAt: -1 }).toArray();
+    async findAll(page = 1, limit = 100, excludeEmailsLower: string[] = []) {
+        const safeLimit = Math.min(Math.max(1, limit), 100);
+        const safePage = Math.max(1, page);
+        const skip = (safePage - 1) * safeLimit;
+        const filter = buildListFilter(excludeEmailsLower);
+
+        return collection().find(filter).sort({ createdAt: -1 }).skip(skip).limit(safeLimit).toArray();
+    }
+
+    async count(excludeEmailsLower: string[] = []) {
+        return collection().countDocuments(buildListFilter(excludeEmailsLower));
     }
 
     async findById(id: string | ObjectId) {

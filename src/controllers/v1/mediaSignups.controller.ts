@@ -4,7 +4,8 @@ import { MediaSignupResponseDTO } from '../../dtos/v1/MediaSignups/MediaSignupRe
 import { MediaSignupStoreRequestDTO } from '../../dtos/v1/MediaSignups/Store/MediaSignupStoreRequestDTO.js';
 import { ApiError } from '../../exceptions/ApiError.js';
 import { MediaSignupRepository } from '../../repositories/mediaSignup.repository.js';
-import type { MediaSignupQueryInput, MediaSignupStatusInput, MediaSignupStoreInput } from '../../schemas/mediaSignup.schema.js';
+import type { MediaSignupStatusInput, MediaSignupStoreInput } from '../../schemas/mediaSignup.schema.js';
+import { MediaSignupQuerySchema } from '../../schemas/mediaSignup.schema.js';
 import { emailService, scheduleBackgroundEmail } from '../../services/email.service.js';
 import {
     cacheAsideJson,
@@ -43,21 +44,32 @@ export const createMediaSignup = async (
 };
 
 export const getAllMediaSignups = async (
-    req: Request<{}, unknown, unknown, MediaSignupQueryInput>,
+    req: Request,
     res: Response,
     next: NextFunction,
 ) => {
     try {
+        const query = MediaSignupQuerySchema.parse(req.query);
         const version = await getMediaSignupListCacheVersion();
-        const filterKey = stableQueryKey({ status: req.query.status ?? '' } as Record<string, unknown>);
+        const filterKey = stableQueryKey({
+            status: query.status ?? '',
+            page: query.page,
+            limit: query.limit,
+        } as Record<string, unknown>);
         const cacheKey = `carib:api:ms:admin:list:v${version}:${filterKey}`;
 
         const body = await cacheAsideJson(cacheKey, ttlMediaSignups(), async () => {
-            const signups = await mediaSignupRepository.findAll(req.query.status);
+            const [signups, total, statusCounts] = await Promise.all([
+                mediaSignupRepository.findAll(query.status, query.page, query.limit),
+                mediaSignupRepository.count(query.status),
+                mediaSignupRepository.countStatusBreakdown(),
+            ]);
+            const totalPages = Math.max(1, Math.ceil(total / query.limit));
 
             return successResponse(
                 'Media signups retrieved successfully',
                 signups.map((signup) => MediaSignupResponseDTO.fromModel(signup)),
+                { total, page: query.page, limit: query.limit, totalPages, statusCounts },
             );
         });
 

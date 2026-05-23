@@ -22,6 +22,7 @@ export class PressReleaseResponseDTO {
     readonly packageId: string;
     readonly featuredUpgrade: boolean;
     readonly featured: boolean;
+    readonly isActive: boolean;
     readonly rejectionReason: string | null;
     readonly amountCents: number;
     readonly status: string;
@@ -55,6 +56,7 @@ export class PressReleaseResponseDTO {
         this.packageId = record.packageId;
         this.featuredUpgrade = record.featuredUpgrade;
         this.featured = record.featured;
+        this.isActive = record.isActive !== false;
         this.rejectionReason = record.rejectionReason ?? null;
         this.amountCents = record.amountCents;
         this.status = record.status;
