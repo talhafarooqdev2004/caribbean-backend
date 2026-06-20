@@ -18,6 +18,7 @@ type CreateUserPayload = {
     role: UserRole;
     phone?: string | null;
     organization?: string | null;
+    country?: string | null;
     credits?: number;
     creditsExpiresAt?: Date | null;
     bundleCreditsRemaining?: number;
@@ -103,7 +104,7 @@ export class UserRepository {
             {
                 role: { $in: ['submitter', 'journalist'] },
                 journalistProfile: { $ne: null },
-                'journalistProfile.digestOptIn': { $ne: false },
+                'journalistProfile.digestOptIn': true,
             },
             {
                 $set: {
@@ -173,6 +174,7 @@ export class UserRepository {
             role: userData.role,
             phone: userData.phone ?? null,
             organization: userData.organization ?? null,
+            country: userData.country ?? null,
             credits: userData.credits ?? 0,
             bundleCreditsRemaining: userData.bundleCreditsRemaining ?? 0,
             creditsExpiresAt: userData.creditsExpiresAt ?? null,
@@ -206,6 +208,7 @@ export class UserRepository {
         if (userData.role !== undefined) set.role = userData.role;
         if (userData.phone !== undefined) set.phone = userData.phone;
         if (userData.organization !== undefined) set.organization = userData.organization;
+        if (userData.country !== undefined) set.country = userData.country;
         if (userData.credits !== undefined) set.credits = userData.credits;
         if (userData.bundleCreditsRemaining !== undefined) set.bundleCreditsRemaining = userData.bundleCreditsRemaining;
         if (userData.creditsExpiresAt !== undefined) set.creditsExpiresAt = userData.creditsExpiresAt;

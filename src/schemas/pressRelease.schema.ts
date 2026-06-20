@@ -44,6 +44,7 @@ const normalizeEmail = (value: unknown) => typeof value === 'string' ? value.tri
 const countSubmitterWords = (value: string) => value.trim().split(/\s+/).filter(Boolean).length;
 
 const SUBMITTER_MAX_PRESS_WORDS = 700;
+const SUBMITTER_MAX_SUMMARY_CHARS = 300;
 
 const submitterPressReleaseContentSchema = z
     .string()
@@ -72,6 +73,7 @@ export const PressReleaseStoreSchema = z.object({
     category: z.preprocess(normalizeString, z.string().min(1).max(80)),
     island: z.preprocess(normalizeString, z.string().max(80).optional().default('Regional')),
     preferredDistributionDate: z.preprocess(normalizeString, z.string().max(60).optional().default('')),
+    summary: z.preprocess(normalizeString, z.string().min(1).max(SUBMITTER_MAX_SUMMARY_CHARS)),
     pressReleaseContent: z.preprocess(normalizeContent, submitterPressReleaseContentSchema),
     targetRegions: z.preprocess(normalizeString, z.string().max(200).optional().default('')),
     specialInstructions: z.preprocess(normalizeContent, z.string().max(1000).optional().default('')),

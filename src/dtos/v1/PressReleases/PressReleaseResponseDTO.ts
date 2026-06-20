@@ -1,4 +1,5 @@
 import type { PressReleaseRecord } from '../../../types/PressRelease.js';
+import { pressReleaseReadingMinutes } from '../../../utils/press-release-reading.util.js';
 
 export class PressReleaseResponseDTO {
     readonly id: string;
@@ -22,6 +23,8 @@ export class PressReleaseResponseDTO {
     readonly packageId: string;
     readonly featuredUpgrade: boolean;
     readonly featured: boolean;
+    readonly featuredPriority: number;
+    readonly featuredUntil: string | null;
     readonly isActive: boolean;
     readonly rejectionReason: string | null;
     readonly amountCents: number;
@@ -33,6 +36,7 @@ export class PressReleaseResponseDTO {
     readonly createdAt: string;
     readonly updatedAt: string;
     readonly publishedAt: string | null;
+    readonly readingMinutes: number;
 
     constructor(record: PressReleaseRecord) {
         this.id = record._id.toHexString();
@@ -56,6 +60,8 @@ export class PressReleaseResponseDTO {
         this.packageId = record.packageId;
         this.featuredUpgrade = record.featuredUpgrade;
         this.featured = record.featured;
+        this.featuredPriority = typeof record.featuredPriority === 'number' ? record.featuredPriority : 0;
+        this.featuredUntil = record.featuredUntil?.toISOString() ?? null;
         this.isActive = record.isActive !== false;
         this.rejectionReason = record.rejectionReason ?? null;
         this.amountCents = record.amountCents;
@@ -67,6 +73,7 @@ export class PressReleaseResponseDTO {
         this.createdAt = record.createdAt.toISOString();
         this.updatedAt = record.updatedAt.toISOString();
         this.publishedAt = record.publishedAt?.toISOString() ?? null;
+        this.readingMinutes = pressReleaseReadingMinutes(record.content, record.summary);
     }
 
     static fromModel(record: PressReleaseRecord): PressReleaseResponseDTO {

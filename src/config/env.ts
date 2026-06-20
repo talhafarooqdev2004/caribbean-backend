@@ -35,10 +35,27 @@ const trimEnv = (value: string | undefined): string | undefined => {
     return t.length > 0 ? t : undefined;
 };
 
+/** Email and redirect links need an absolute URL with a protocol. */
+const normalizeFrontendUrl = (raw: string | undefined): string => {
+    let value = (raw || 'http://localhost:3000').trim().replace(/\/+$/, '');
+
+    if (!value) {
+        value = 'http://localhost:3000';
+    }
+
+    if (/^https?:\/\//i.test(value)) {
+        return value;
+    }
+
+    const isLocal = /^localhost(?::\d+)?$/i.test(value) || /^127\.0\.0\.1(?::\d+)?$/i.test(value);
+
+    return `${isLocal ? 'http' : 'https'}://${value}`;
+};
+
 export const ENV = {
     NODE_ENV: process.env.NODE_ENV || 'development',
     PORT: parseInteger(process.env.PORT, 5000),
-    FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:3000',
+    FRONTEND_URL: normalizeFrontendUrl(process.env.FRONTEND_URL),
     /** Public API base for links in emails (digest unsubscribe, etc.). Defaults to local backend. */
     BACKEND_URL: (process.env.BACKEND_URL || process.env.API_URL || `http://localhost:${parseInteger(process.env.PORT, 5000)}`).replace(/\/$/, ''),
     CORS_ORIGINS: parseOrigins(process.env.CORS_ORIGINS || process.env.ALLOWED_ORIGINS),
@@ -76,4 +93,6 @@ export const ENV = {
     REDIS_CACHE_TTL_ADMIN_PR_LIST_SEC: parseInteger(process.env.REDIS_CACHE_TTL_ADMIN_PR_LIST_SEC, 30),
     REDIS_CACHE_TTL_PORTAL_SEC: parseInteger(process.env.REDIS_CACHE_TTL_PORTAL_SEC, 20),
     REDIS_CACHE_TTL_MEDIA_SIGNUPS_SEC: parseInteger(process.env.REDIS_CACHE_TTL_MEDIA_SIGNUPS_SEC, 30),
+    /** Secret for emergency maintenance / IP-gate disable via POST /site-access/maintenance/off */
+    SITE_ACCESS_CONTROL_SECRET: trimEnv(process.env.SITE_ACCESS_CONTROL_SECRET),
 };

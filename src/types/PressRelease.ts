@@ -32,6 +32,10 @@ export type PressReleaseRecord = {
     packageId: PressReleasePackage;
     featuredUpgrade: boolean;
     featured: boolean;
+    /** Higher values appear first in the featured carousel (0 = default chronological). */
+    featuredPriority: number;
+    /** When set, featured placement ends at this time (7 days after admin approval). */
+    featuredUntil?: Date | null;
     /** When false, approved release is hidden from the public site. Defaults to true. */
     isActive?: boolean;
     rejectionReason: string | null;

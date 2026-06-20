@@ -31,7 +31,7 @@ export class RegisterRequestDTO {
             primaryBeat,
             website: null,
             bio,
-            digestOptIn: data.digestOptIn !== false,
+            digestOptIn: data.digestOptIn === true,
             digestFrequency: '3x-weekly',
             unsubscribeToken: crypto.randomUUID(),
         };

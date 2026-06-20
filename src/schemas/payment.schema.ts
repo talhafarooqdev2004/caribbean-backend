@@ -5,6 +5,8 @@ export const SquareCheckoutSchema = z.object({
     quantity: z.coerce.number().int().min(1).max(25).optional().default(1),
     email: z.string().email().optional(),
     cardholderName: z.string().max(160).optional(),
+    organization: z.string().max(140).optional().nullable(),
+    country: z.string().max(160).optional().nullable(),
 });
 
 export const SquareProcessSchema = z.object({
@@ -19,6 +21,8 @@ export const SquareProcessSchema = z.object({
     quantity: z.coerce.number().int().min(1).max(25).optional().default(1),
     email: z.string().email().optional(),
     cardholderName: z.string().max(160).optional(),
+    organization: z.string().max(140).optional().nullable(),
+    country: z.string().max(160).optional().nullable(),
 }).superRefine((data, ctx) => {
     if (data.creditPackage && data.releaseId) {
         ctx.addIssue({

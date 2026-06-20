@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { MongoServerError, type ObjectId } from 'mongodb';
-import { ENV } from '../config/env.js';
+import { emailAnchor, emailButton, emailPublicUrl } from '../utils/email-html.util.js';
 import { emailService } from './email.service.js';
 import { MediaSignupRepository } from '../repositories/mediaSignup.repository.js';
 import { MediaPortalInviteJobRepository } from '../repositories/mediaPortalInviteJob.repository.js';
@@ -40,9 +40,8 @@ const isValidEmail = (email: string) => {
 const generateSecurePassword = () => crypto.randomBytes(18).toString('base64url');
 
 const buildInviteEmailHtml = (firstName: string, email: string, plainPassword: string) => {
-    const baseUrl = ENV.FRONTEND_URL.replace(/\/$/, '');
-    const loginUrl = `${baseUrl}/login`;
-    const portalUrl = `${baseUrl}/portal`;
+    const loginUrl = emailPublicUrl('/login');
+    const portalUrl = emailPublicUrl('/portal');
 
     const intro = 'Your Carib Newswire portal is ready. Sign in using the email address and temporary password below. From your dashboard you can manage press releases, credits, bookmarks, and your profile.';
 
@@ -53,8 +52,8 @@ const buildInviteEmailHtml = (firstName: string, email: string, plainPassword: s
             <p>${intro}</p>
             <p><strong>Email:</strong> ${escapeHtml(email)}</p>
             <p><strong>Temporary password:</strong> <code style="font-size: 15px;">${escapeHtml(plainPassword)}</code></p>
-            <p><a href="${loginUrl}" style="display: inline-block; padding: 12px 18px; background: #16477c; color: #fff; text-decoration: none; border-radius: 6px;">Sign in</a></p>
-            <p><a href="${portalUrl}">Open your portal</a></p>
+            ${emailButton(loginUrl, 'Sign in')}
+            <p>${emailAnchor(portalUrl, 'Open your portal')}</p>
             <p style="color: #667085; font-size: 14px;">For security, please change this password after you sign in (use Forgot password on the login page if needed).</p>
         </div>
     `;
@@ -185,8 +184,8 @@ const processOneSignup = async (signupObjectId: ObjectId): Promise<MediaPortalIn
                 `Email: ${email}`,
                 `Temporary password: ${plainPassword}`,
                 '',
-                `Sign in: ${ENV.FRONTEND_URL.replace(/\/$/, '')}/login`,
-                `Portal: ${ENV.FRONTEND_URL.replace(/\/$/, '')}/portal`,
+                `Sign in: ${emailPublicUrl('/login')}`,
+                `Portal: ${emailPublicUrl('/portal')}`,
                 '',
                 'For security, please change this password after you sign in (use Forgot password on the login page if needed).',
             ].join('\n'),

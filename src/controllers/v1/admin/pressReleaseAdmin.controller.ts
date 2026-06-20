@@ -7,11 +7,22 @@ import { PressReleaseResponseDTO } from '../../../dtos/v1/PressReleases/PressRel
 import { successResponse } from '../../../utils/response.util.js';
 import { emailService, scheduleBackgroundEmail } from '../../../services/email.service.js';
 import { ENV } from '../../../config/env.js';
+import { emailAnchor, emailPublicUrl } from '../../../utils/email-html.util.js';
 
 const pressReleaseRepository = new PressReleaseRepository();
 
+const parseFeaturedPriority = (value: unknown) => {
+    const parsed = Number(value);
+
+    if (!Number.isFinite(parsed)) {
+        return 0;
+    }
+
+    return Math.min(9999, Math.max(0, Math.trunc(parsed)));
+};
+
 const sendApprovalEmail = async (release) => {
-    const releaseUrl = `${ENV.FRONTEND_URL}/newsroom/${release.slug}`;
+    const releaseUrl = emailPublicUrl(`/newsroom/${release.slug}`);
 
     await emailService.sendMail({
         to: release.email,
@@ -20,7 +31,7 @@ const sendApprovalEmail = async (release) => {
             <h1>Congratulations</h1>
             <p>Title: <strong>${release.title}</strong></p>
             <p>Your press release is now live on Carib Newswire.</p>
-            <p><a href="${releaseUrl}">View Your Release</a></p>
+            <p>${emailAnchor(releaseUrl, 'View Your Release')}</p>
         `,
     });
 };
@@ -33,7 +44,7 @@ const sendRejectionEmail = async (release, reason = '') => {
             <h1>Press Release Status Update</h1>
             <p>Your press release was not approved.</p>
             <p><strong>Reason:</strong> ${reason || 'No specific reason was provided.'}</p>
-            <p>Contact: <a href="mailto:info@caribnewswire.com">info@caribnewswire.com</a></p>
+            <p>Contact: ${emailAnchor('mailto:info@caribnewswire.com', 'info@caribnewswire.com')}</p>
         `,
     });
 };
@@ -50,6 +61,7 @@ export const createRelease = async (req: Request, res: Response, next: NextFunct
 
         const featuredUpgrade = Boolean(req.body.featuredUpgrade);
         const featured = req.body.featured !== undefined ? Boolean(req.body.featured) : featuredUpgrade;
+        const featuredPriority = parseFeaturedPriority(req.body.featuredPriority);
 
         const release = await pressReleaseRepository.create({
             ...requestDto.toPersistence(0),
@@ -59,6 +71,7 @@ export const createRelease = async (req: Request, res: Response, next: NextFunct
             packageId: 'custom',
             featuredUpgrade,
             featured,
+            featuredPriority,
         });
 
         res.status(HTTP_STATUS.CREATED).json(successResponse(SUCCESS_MESSAGES.CREATED, PressReleaseResponseDTO.fromModel(release)));
@@ -69,7 +82,15 @@ export const createRelease = async (req: Request, res: Response, next: NextFunct
 
 export const updateFeature = async (req: Request<{ id: string }>, res: Response, next: NextFunction) => {
     try {
-        const release = await pressReleaseRepository.setFeatured(req.params.id, Boolean(req.body.featured));
+        const payload: { featured: boolean; featuredPriority?: number } = {
+            featured: Boolean(req.body.featured),
+        };
+
+        if (req.body.featuredPriority !== undefined) {
+            payload.featuredPriority = parseFeaturedPriority(req.body.featuredPriority);
+        }
+
+        const release = await pressReleaseRepository.update(req.params.id, payload);
 
         if (!release) {
             throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Press release not found');
@@ -206,6 +227,10 @@ export const updateRelease = async (req: Request<{ id: string }>, res: Response,
             payload.specialInstructions = '';
         }
 
+        if (typeof req.body.summary === 'string') {
+            payload.summary = req.body.summary.trim().slice(0, 300);
+        }
+
         if (typeof req.body.content !== 'string' || !req.body.content.trim()) {
             throw new ApiError(HTTP_STATUS.BAD_REQUEST, 'Press release content is required');
         }
@@ -256,6 +281,14 @@ export const updateRelease = async (req: Request<{ id: string }>, res: Response,
             }
         }
 
+        if (req.body.featuredPriority !== undefined) {
+            payload.featuredPriority = parseFeaturedPriority(req.body.featuredPriority);
+        }
+
+        if (req.body.featured !== undefined) {
+            payload.featured = Boolean(req.body.featured);
+        }
+
         const release = await pressReleaseRepository.update(req.params.id, payload as any);
 
         if (!release) {
@@ -266,6 +299,36 @@ export const updateRelease = async (req: Request<{ id: string }>, res: Response,
     } catch (error) {
         next(error);
     }
+};
+
+export const updateFeaturedPriority = async (req: Request<{ id: string }>, res: Response, next: NextFunction) => {
+    try {
+        const release = await pressReleaseRepository.update(req.params.id, {
+            featuredPriority: parseFeaturedPriority(req.body.featuredPriority),
+        });
+
+        if (!release) {
+            throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Press release not found');
+        }
+
+        res.status(HTTP_STATUS.OK).json(successResponse(SUCCESS_MESSAGES.UPDATED, PressReleaseResponseDTO.fromModel(release)));
+    } catch (error) {
+        next(error);
+    }
+};
+
+const buildFeaturedApprovalExtras = (release: { featured: boolean; featuredUpgrade: boolean }) => {
+    if (!release.featured && !release.featuredUpgrade) {
+        return {};
+    }
+
+    const featuredUntil = new Date();
+    featuredUntil.setDate(featuredUntil.getDate() + 7);
+
+    return {
+        featured: true,
+        featuredUntil,
+    };
 };
 
 export const approveRelease = async (req: Request<{ id: string }>, res: Response, next: NextFunction) => {
@@ -280,7 +343,12 @@ export const approveRelease = async (req: Request<{ id: string }>, res: Response
             throw new ApiError(HTTP_STATUS.UNPROCESSABLE_ENTITY, 'Cannot approve press release until payment is completed');
         }
 
-        const release = await pressReleaseRepository.updateStatus(req.params.id, 'approved');
+        const release = await pressReleaseRepository.updateStatus(
+            req.params.id,
+            'approved',
+            '',
+            buildFeaturedApprovalExtras(existing),
+        );
 
         if (!release) {
             throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Press release not found');

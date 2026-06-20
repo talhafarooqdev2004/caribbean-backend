@@ -1,20 +1,33 @@
 import type { PressReleaseRecord } from '../types/PressRelease.js';
 import { PressReleaseRepository } from '../repositories/pressRelease.repository.js';
+import { NewsletterSubscriberRepository } from '../repositories/newsletterSubscriber.repository.js';
 import { UserRepository } from '../repositories/user.repository.js';
 import { emailService } from './email.service.js';
 import { ENV } from '../config/env.js';
+import { emailAnchor, emailPublicUrl } from '../utils/email-html.util.js';
 import crypto from 'crypto';
 import { AppConfigRepository } from '../repositories/appConfig.repository.js';
 import { APP_CONFIG_KEYS } from '../config/constants.js';
+import type { UserRecord } from '../types/User.js';
+import type { NewsletterSubscriberRecord } from '../types/NewsletterSubscriber.js';
 
 const pressReleaseRepository = new PressReleaseRepository();
 const userRepository = new UserRepository();
+const newsletterSubscriberRepository = new NewsletterSubscriberRepository();
 const appConfigRepository = new AppConfigRepository();
 
 const DIGEST_RELEASE_LIMIT = 10; // max stories included in each digest email body
-/** Max opted-in portal users who receive each digest send (stable order: email ascending). */
+/** Max opted-in recipients who receive each digest send (stable order: email ascending). */
 const DIGEST_RECIPIENT_LIMIT = 10;
 const SUMMARY_MAX_LENGTH = 280;
+
+type DigestRecipient = {
+    email: string;
+    unsubscribeToken: string;
+    kind: 'user' | 'newsletter';
+    user?: UserRecord;
+    subscriber?: NewsletterSubscriberRecord;
+};
 
 const formatDigestDate = () => new Date().toLocaleDateString('en-US');
 
@@ -43,7 +56,7 @@ const escapeHtml = (value: string) => value
 
 const renderDigest = (releases: PressReleaseRecord[], unsubscribeToken: string, digestDateLabel: string) => {
     const items = releases.map((release) => {
-        const href = `${ENV.FRONTEND_URL}/newsroom/${release.slug}`;
+        const href = emailPublicUrl(`/newsroom/${release.slug}`);
         const featuredBadge = release.featured
             ? '<span style="display: inline-block; margin-right: 8px; padding: 2px 8px; font-size: 11px; font-weight: bold; letter-spacing: 0.04em; text-transform: uppercase; color: #fff; background: #16477c; border-radius: 4px;">Featured</span>'
             : '';
@@ -70,11 +83,48 @@ const renderDigest = (releases: PressReleaseRecord[], unsubscribeToken: string, 
             <p>${digestDateLabel}</p>
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0">${items}</table>
             <footer style="margin-top: 28px; padding-top: 18px; border-top: 1px solid #e8edf3; color: #667085;">
-                <p>Receiving this because you opted in as a media partner.</p>
-                <p><a href="${unsubscribeUrl}">Unsubscribe</a></p>
+                <p>Receiving this because you subscribed to Caribbean news updates.</p>
+                <p>${emailAnchor(unsubscribeUrl, 'Unsubscribe')}</p>
             </footer>
         </div>
     `;
+};
+
+const buildDigestRecipients = async (cadence: 'daily' | '3x-weekly'): Promise<DigestRecipient[]> => {
+    const [portalUsers, newsletterSubscribers] = await Promise.all([
+        userRepository.findPortalMembers(),
+        newsletterSubscriberRepository.findAllActive(),
+    ]);
+
+    const optedInUsers = portalUsers.filter((user) => user.journalistProfile?.digestOptIn === true)
+        .filter((user) => {
+            const userCadence = user.journalistProfile?.digestFrequency === '3x-weekly' ? '3x-weekly' : 'daily';
+            return userCadence === cadence;
+        });
+
+    const userEmails = new Set(optedInUsers.map((user) => user.email.trim().toLowerCase()));
+
+    const recipients: DigestRecipient[] = optedInUsers.map((user) => ({
+        email: user.email,
+        unsubscribeToken: user.journalistProfile?.unsubscribeToken || crypto.randomUUID(),
+        kind: 'user',
+        user,
+    }));
+
+    for (const subscriber of newsletterSubscribers) {
+        if (userEmails.has(subscriber.email)) {
+            continue;
+        }
+
+        recipients.push({
+            email: subscriber.email,
+            unsubscribeToken: subscriber.unsubscribeToken,
+            kind: 'newsletter',
+            subscriber,
+        });
+    }
+
+    return recipients;
 };
 
 export type DigestSendResult = {
@@ -82,12 +132,12 @@ export type DigestSendResult = {
     releases: number;
     sent: number;
     skipped: boolean;
-    skipReason?: 'no_journalists' | 'no_releases';
+    skipReason?: 'no_recipients' | 'no_releases';
 };
 
 export const sendJournalistDigest = async (cadence: 'daily' | '3x-weekly'): Promise<DigestSendResult> => {
-    const [portalUsers, releases] = await Promise.all([
-        userRepository.findPortalMembers(),
+    const [digestRecipients, releases] = await Promise.all([
+        buildDigestRecipients(cadence),
         pressReleaseRepository.findAll({
             status: 'approved',
             paymentStatus: 'paid',
@@ -97,23 +147,17 @@ export const sendJournalistDigest = async (cadence: 'daily' | '3x-weekly'): Prom
         }),
     ]);
 
-    const optedInJournalists = portalUsers.filter((user) => user.journalistProfile && user.journalistProfile.digestOptIn !== false)
-        .filter((user) => {
-            const userCadence = user.journalistProfile?.digestFrequency === '3x-weekly' ? '3x-weekly' : 'daily';
-            return userCadence === cadence;
-        });
-
-    if (optedInJournalists.length === 0 || releases.length === 0) {
+    if (digestRecipients.length === 0 || releases.length === 0) {
         return {
             recipients: 0,
             releases: releases.length,
             sent: 0,
             skipped: true,
-            skipReason: optedInJournalists.length === 0 ? 'no_journalists' : 'no_releases',
+            skipReason: digestRecipients.length === 0 ? 'no_recipients' : 'no_releases',
         };
     }
 
-    const digestRecipients = [...optedInJournalists]
+    const limitedRecipients = [...digestRecipients]
         .sort((a, b) => a.email.localeCompare(b.email, 'en'))
         .slice(0, DIGEST_RECIPIENT_LIMIT);
 
@@ -123,30 +167,32 @@ export const sendJournalistDigest = async (cadence: 'daily' | '3x-weekly'): Prom
     const subject = `Caribbean News Digest - ${storyCount} ${storyWord} - ${digestDateLabel}`;
 
     const results = await Promise.allSettled(
-        digestRecipients.map(async (journalist) => {
-            const unsubscribeToken = journalist.journalistProfile?.unsubscribeToken || crypto.randomUUID();
+        limitedRecipients.map(async (recipient) => {
+            if (recipient.kind === 'user' && recipient.user) {
+                const journalist = recipient.user;
 
-            if (!journalist.journalistProfile?.unsubscribeToken) {
-                await userRepository.update(journalist._id, {
-                    journalistProfile: {
-                        ...(journalist.journalistProfile ?? {
-                            mediaOutlet: null,
-                            location: null,
-                            primaryBeat: null,
-                            website: null,
-                            bio: null,
-                            digestOptIn: true,
-                            digestFrequency: 'daily',
-                        }),
-                        unsubscribeToken,
-                    },
-                });
+                if (!journalist.journalistProfile?.unsubscribeToken) {
+                    await userRepository.update(journalist._id, {
+                        journalistProfile: {
+                            ...(journalist.journalistProfile ?? {
+                                mediaOutlet: null,
+                                location: null,
+                                primaryBeat: null,
+                                website: null,
+                                bio: null,
+                                digestOptIn: true,
+                                digestFrequency: 'daily',
+                            }),
+                            unsubscribeToken: recipient.unsubscribeToken,
+                        },
+                    });
+                }
             }
 
             return emailService.sendMail({
-                to: journalist.email,
+                to: recipient.email,
                 subject,
-                html: renderDigest(releases, unsubscribeToken, digestDateLabel),
+                html: renderDigest(releases, recipient.unsubscribeToken, digestDateLabel),
             });
         }),
     );
@@ -158,7 +204,7 @@ export const sendJournalistDigest = async (cadence: 'daily' | '3x-weekly'): Prom
     );
 
     return {
-        recipients: digestRecipients.length,
+        recipients: limitedRecipients.length,
         releases: storyCount,
         sent: results.filter((result) => result.status === 'fulfilled' && result.value).length,
         skipped: false,

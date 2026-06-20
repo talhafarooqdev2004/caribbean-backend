@@ -9,6 +9,7 @@ import type { AdminUserCreditsIncrementInput } from '../../../schemas/adminUserC
 import { AdminUserListQuerySchema } from '../../../schemas/adminList.schema.js';
 import { emailService } from '../../../services/email.service.js';
 import { successResponse } from '../../../utils/response.util.js';
+import { emailAnchor, emailPublicUrl } from '../../../utils/email-html.util.js';
 import { logger } from '../../../utils/logger.util.js';
 
 const userRepository = new UserRepository();
@@ -24,7 +25,7 @@ export const getAllUsers = async (req: Request, res: Response, next: NextFunctio
         const enrichedUsers = await Promise.all(users.map(async (user) => ({
             ...UserResponseDTO.fromModel(user),
             totalSubmissions: await pressReleaseRepository.countBySubmitter(user._id),
-            digestSubscribed: Boolean(user.journalistProfile && user.journalistProfile.digestOptIn !== false),
+            digestSubscribed: user.journalistProfile?.digestOptIn === true,
         })));
         const totalPages = Math.max(1, Math.ceil(total / query.limit));
 
@@ -117,7 +118,7 @@ export const addUserCredits = async (
             throw new ApiError(HTTP_STATUS.UNPROCESSABLE_ENTITY, 'Unable to update credits.');
         }
 
-        const portalUrl = `${ENV.FRONTEND_URL.replace(/\/$/, '')}/portal`;
+        const portalUrl = emailPublicUrl('/portal');
         const creditsNow = updated.credits ?? 0;
         const emailHtml = `
                 <div style="font-family: Arial, sans-serif; color: #274060; max-width: 560px;">
@@ -125,7 +126,7 @@ export const addUserCredits = async (
                     <p>Hi ${escapeHtml(updated.firstName)},</p>
                     <p><strong>${delta}</strong> distribution credit${delta === 1 ? '' : 's'} ${delta === 1 ? 'has' : 'have'} been added to your account by our team.</p>
                     <p>Your current balance is <strong>${creditsNow}</strong> credit${creditsNow === 1 ? '' : 's'}.</p>
-                    <p><a href="${portalUrl}">Open your portal</a> to manage releases and credits.</p>
+                    <p>${emailAnchor(portalUrl, 'Open your portal')} to manage releases and credits.</p>
                 </div>
             `;
 

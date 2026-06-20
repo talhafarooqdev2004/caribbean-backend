@@ -1,7 +1,14 @@
 import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
+import { DOCUMENT_MAX_BYTES } from '../constants/upload.constants.js';
 import { ENV } from '../config/env.js';
+
+const DOCUMENT_MIME_TYPES = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+];
 
 const pressReleaseUploadDir = path.resolve(process.cwd(), ENV.UPLOAD_DIR, 'press-releases');
 
@@ -25,21 +32,29 @@ const storage = multer.diskStorage({
 export const pressReleaseUpload = multer({
     storage,
     limits: {
-        fileSize: ENV.MAX_FILE_SIZE,
+        fileSize: Math.min(ENV.MAX_FILE_SIZE, DOCUMENT_MAX_BYTES),
     },
     fileFilter: (_req, file, callback) => {
-        const isImage = file.fieldname === 'coverPhoto' && file.mimetype.startsWith('image/');
-        const isDocument = file.fieldname === 'document' && [
-            'application/pdf',
-            'application/msword',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        ].includes(file.mimetype);
+        if (file.fieldname === 'coverPhoto') {
+            if (!file.mimetype.startsWith('image/')) {
+                callback(new Error('Cover image must be a JPG, PNG, or WebP image.'));
+                return;
+            }
 
-        if (!isImage && !isDocument) {
-            callback(new Error('Unsupported upload type'));
+            callback(null, true);
             return;
         }
 
-        callback(null, true);
+        if (file.fieldname === 'document') {
+            if (!DOCUMENT_MIME_TYPES.includes(file.mimetype)) {
+                callback(new Error('Document must be a PDF, DOC, or DOCX file.'));
+                return;
+            }
+
+            callback(null, true);
+            return;
+        }
+
+        callback(new Error('Unexpected upload field.'));
     },
 });

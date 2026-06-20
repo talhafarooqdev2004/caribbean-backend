@@ -13,6 +13,7 @@ import { successResponse } from '../../../utils/response.util.js';
 import { generateToken } from '../../../utils/jwt.util.js';
 import { ensureDefaultAdminUser, envAdminCredentialsMatch, getAdminEmail } from '../../../services/auth.service.js';
 import { emailService, scheduleBackgroundEmail } from '../../../services/email.service.js';
+import { emailAnchor, emailLinkBlock, emailPublicUrl } from '../../../utils/email-html.util.js';
 import { logger } from '../../../utils/logger.util.js';
 
 const userRepository = new UserRepository();
@@ -77,8 +78,7 @@ export const forgotPassword = async (
                 passwordResetExpiresAt,
             });
 
-            const baseUrl = ENV.FRONTEND_URL.replace(/\/$/, '');
-            const resetUrl = `${baseUrl}/reset-password?token=${encodeURIComponent(token)}`;
+            const resetUrl = emailPublicUrl(`/reset-password?token=${encodeURIComponent(token)}`);
             const firstName = typeof user.firstName === 'string' && user.firstName.trim() ? user.firstName.trim() : 'there';
 
             scheduleBackgroundEmail('forgot-password', () => emailService.sendMail({
@@ -86,7 +86,7 @@ export const forgotPassword = async (
                 subject: 'Reset your Carib Newswire password',
                 html: `<p>Hi ${escapeHtml(firstName)},</p>`
                     + '<p>We received a request to reset the password for your Carib Newswire account.</p>'
-                    + `<p><a href="${resetUrl}">Choose a new password</a> (link expires in one hour).</p>`
+                    + `<p>${emailAnchor(resetUrl, 'Choose a new password')} (link expires in one hour).</p>`
                     + '<p>If you did not request this, you can ignore this email.</p>',
             }));
         }
@@ -225,14 +225,13 @@ export const register = async (
         });
 
         const firstName = typeof user?.firstName === 'string' ? escapeHtml(user.firstName.trim()) : 'there';
-        const portalBase = ENV.FRONTEND_URL.replace(/\/$/, '');
 
         scheduleBackgroundEmail('register-welcome', () => emailService.sendMail({
             to: requestDto.email,
             subject: 'Welcome to Carib Newswire',
             html: `<p>Hi ${firstName},</p>`
                 + '<p>Your Carib Newswire account is ready. You can submit press releases, manage credits, save newsroom stories, and control your email digest from your portal.</p>'
-                + `<p><a href="${portalBase}/portal">Open your portal</a></p>`,
+                + emailLinkBlock('/portal', 'Open your portal'),
         }));
 
         const orgLine = requestDto.organization

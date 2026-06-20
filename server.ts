@@ -8,6 +8,7 @@ import { ensureDefaultAppConfig } from './src/services/appConfig.service.js';
 import { verifySquareLocationForActiveCredentials } from './src/services/square.service.js';
 import { ensureDefaultAdminUser } from './src/services/auth.service.js';
 import { startEmailDigestScheduler } from './src/services/emailDigest.scheduler.js';
+import { startFeaturedPlacementScheduler } from './src/services/featuredPlacement.scheduler.js';
 import { recoverStaleMediaPortalInviteJobs, startMediaPortalInviteRecoveryScheduler } from './src/services/mediaPortalInvite.service.js';
 
 const PORT = ENV.PORT || 5000;
@@ -20,6 +21,7 @@ await ensureDefaultAppConfig();
 await verifySquareLocationForActiveCredentials();
 await ensureDefaultAdminUser();
 startEmailDigestScheduler();
+startFeaturedPlacementScheduler();
 await recoverStaleMediaPortalInviteJobs();
 startMediaPortalInviteRecoveryScheduler();
 

@@ -8,6 +8,7 @@ import { UserResponseDTO } from '../../dtos/v1/Auth/UserResponseDTO.js';
 import { ApiError } from '../../exceptions/ApiError.js';
 import { getDb } from '../../lib/mongodb.js';
 import { PressReleaseRepository } from '../../repositories/pressRelease.repository.js';
+import { NewsletterSubscriberRepository } from '../../repositories/newsletterSubscriber.repository.js';
 import { UserRepository } from '../../repositories/user.repository.js';
 import { getEmailDigestFrequency } from '../../services/appConfig.service.js';
 import {
@@ -21,6 +22,7 @@ import type { PressReleaseRecord } from '../../types/PressRelease.js';
 import type { JournalistProfile, UserRecord } from '../../types/User.js';
 
 const userRepository = new UserRepository();
+const newsletterSubscriberRepository = new NewsletterSubscriberRepository();
 const pressReleaseRepository = new PressReleaseRepository();
 const bookmarkCollection = () => getDb().collection('journalist_bookmarks');
 
@@ -66,7 +68,7 @@ const buildPortalState = (user: UserRecord) => {
         location: user.journalistProfile?.location ?? '',
         primaryBeat: user.journalistProfile?.primaryBeat ?? '',
         bio: user.journalistProfile?.bio ?? '',
-        digestOptedIn: user.journalistProfile != null && user.journalistProfile.digestOptIn !== false,
+        digestOptedIn: user.journalistProfile?.digestOptIn === true,
         organization: user.organization,
         phone: user.phone,
         credits: dto.credits,
@@ -337,7 +339,7 @@ export const updatePortalDigestSettings = async (req: Request, res: Response, ne
                 primaryBeat: raw.primaryBeat ?? null,
                 website: raw.website ?? null,
                 bio: raw.bio ?? null,
-                digestOptIn: raw.digestOptIn !== false,
+                digestOptIn: raw.digestOptIn === true,
                 digestFrequency: raw.digestFrequency === '3x-weekly' ? '3x-weekly' : 'daily',
                 unsubscribeToken: raw.unsubscribeToken ?? undefined,
             }
@@ -382,24 +384,36 @@ export const unsubscribeDigestGet = async (req: Request, res: Response, next: Ne
 
         const user = await getDb().collection<UserRecord>('users').findOne({ 'journalistProfile.unsubscribeToken': token });
 
-        if (!user) {
-            throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Unsubscribe token not found');
+        if (user) {
+            await userRepository.update(user._id, {
+                journalistProfile: {
+                    ...user.journalistProfile,
+                    digestOptIn: false,
+                } as JournalistProfile,
+            });
+
+            const loginUrl = `${ENV.FRONTEND_URL.replace(/\/$/, '')}/login`;
+
+            res.status(HTTP_STATUS.OK).type('html').send(
+                '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Unsubscribed</title></head>'
+                + '<body style="font-family: Arial, sans-serif; color: #274060; padding: 24px; max-width: 560px;">'
+                + '<p>You have been successfully unsubscribed from Carib Newswire email digests.</p>'
+                + '<p>Changed your mind? <a href="' + loginUrl + '">Log in</a> to your portal to re-subscribe.</p>'
+                + '</body></html>',
+            );
+            return;
         }
 
-        await userRepository.update(user._id, {
-            journalistProfile: {
-                ...user.journalistProfile,
-                digestOptIn: false,
-            } as JournalistProfile,
-        });
+        const subscriber = await newsletterSubscriberRepository.unsubscribeByToken(token);
 
-        const loginUrl = `${ENV.FRONTEND_URL.replace(/\/$/, '')}/login`;
+        if (!subscriber) {
+            throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Unsubscribe token not found');
+        }
 
         res.status(HTTP_STATUS.OK).type('html').send(
             '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Unsubscribed</title></head>'
             + '<body style="font-family: Arial, sans-serif; color: #274060; padding: 24px; max-width: 560px;">'
             + '<p>You have been successfully unsubscribed from Carib Newswire email digests.</p>'
-            + '<p>Changed your mind? <a href="' + loginUrl + '">Log in</a> to your portal to re-subscribe.</p>'
             + '</body></html>',
         );
     } catch (error) {

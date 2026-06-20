@@ -94,9 +94,9 @@ const buildPressReleaseFilter = (query: PressReleaseQuery): Filter<PressReleaseR
 
 const buildSort = (query: PressReleaseQuery): Sort => {
     return query.sort === 'adminQueue'
-        ? { featured: -1 as const, featuredUpgrade: -1 as const, createdAt: -1 as const }
+        ? { featured: -1 as const, featuredPriority: -1 as const, featuredUpgrade: -1 as const, createdAt: -1 as const }
         : query.sort === 'featured' || query.sort === 'featuredFirst'
-        ? { featured: -1 as const, publishedAt: -1 as const, createdAt: -1 as const }
+        ? { featured: -1 as const, featuredPriority: -1 as const, publishedAt: -1 as const, createdAt: -1 as const }
         : query.sort === 'oldest'
             ? { publishedAt: 1 as const, createdAt: 1 as const }
             : query.sort === 'mostViewed'
@@ -227,7 +227,7 @@ export class PressReleaseRepository {
             updatedAt: new Date(),
         };
 
-        if (typeof payload.content === 'string') {
+        if (typeof payload.content === 'string' && typeof payload.summary !== 'string') {
             set.summary = buildSummary(payload.content);
         }
 
@@ -286,13 +286,41 @@ export class PressReleaseRepository {
         return this.update(id, update);
     }
 
-    async updateStatus(id: string | ObjectId, status: PressReleaseStatus, rejectionReason = '') {
+    async updateStatus(
+        id: string | ObjectId,
+        status: PressReleaseStatus,
+        rejectionReason = '',
+        extras: Partial<PressReleaseRecord> = {},
+    ) {
         return this.update(id, {
             status,
             publishedAt: status === 'approved' ? new Date() : null,
             rejectionReason: status === 'rejected' ? rejectionReason || null : null,
             ...(status === 'approved' ? { isActive: true } : {}),
+            ...extras,
         } as Partial<PressReleaseRecord>);
+    }
+
+    async expireFeaturedPlacements() {
+        const now = new Date();
+        const result = await collection().updateMany(
+            {
+                featured: true,
+                featuredUntil: { $type: 'date', $lte: now },
+            },
+            {
+                $set: {
+                    featured: false,
+                    updatedAt: now,
+                },
+            },
+        );
+
+        if (result.modifiedCount > 0 && isRedisCacheEnabled()) {
+            await bumpPressReleaseListCache();
+        }
+
+        return result.modifiedCount;
     }
 
     async toggleFeatured(id: string | ObjectId) {
@@ -445,6 +473,31 @@ export class PressReleaseRepository {
         }
 
         return collection().countDocuments({ submitterId: objectId });
+    }
+
+    async findLatestApprovedPaid() {
+        return collection().findOne(
+            {
+                status: 'approved',
+                paymentStatus: 'paid',
+                isActive: { $ne: false },
+            },
+            { sort: { publishedAt: -1, createdAt: -1 } },
+        );
+    }
+
+    async countDistinctApprovedIslands() {
+        const islands = await collection().distinct('island', {
+            status: 'approved',
+            paymentStatus: 'paid',
+            isActive: { $ne: false },
+            island: { $type: 'string', $nin: ['', 'Regional', 'regional'] },
+        });
+
+        return islands
+            .map((value) => (typeof value === 'string' ? value.trim() : ''))
+            .filter((value) => value.length > 0)
+            .length;
     }
 
     getPackagePrice(packageId: PressReleasePackage, featuredUpgrade: boolean) {

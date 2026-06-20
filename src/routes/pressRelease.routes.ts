@@ -15,6 +15,7 @@ import {
 } from '../controllers/v1/pressReleases.controller.js';
 import { authMiddleware, authorize, optionalAuth } from '../middlewares/auth.middleware.js';
 import { pressReleaseUpload } from '../middlewares/upload.middleware.js';
+import { validatePressReleaseUpload } from '../middlewares/validatePressReleaseUpload.middleware.js';
 import { apiLimiter, readLimiter } from '../middlewares/rateLimiter.middleware.js';
 import { validate, validateQuery } from '../middlewares/validate.middleware.js';
 import {
@@ -41,6 +42,7 @@ router.post(
         { name: 'coverPhoto', maxCount: 1 },
         { name: 'document', maxCount: 1 },
     ]),
+    validatePressReleaseUpload,
     validate(CreditCheckoutSessionStoreSchema),
     createCreditCheckoutSession,
 );
@@ -54,6 +56,7 @@ router.post(
         { name: 'coverPhoto', maxCount: 1 },
         { name: 'document', maxCount: 1 },
     ]),
+    validatePressReleaseUpload,
     validate(PressReleaseStoreSchema),
     createPressRelease,
 );

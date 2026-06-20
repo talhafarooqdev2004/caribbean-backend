@@ -9,6 +9,7 @@ export class UserResponseDTO {
     readonly role: string;
     readonly phone: string | null;
     readonly organization: string | null;
+    readonly country: string | null;
     readonly credits: number;
     /** Credits from 3-Release bundle lots (subset of `credits`). */
     readonly bundleCreditsRemaining: number;
@@ -31,6 +32,7 @@ export class UserResponseDTO {
         this.role = user.role;
         this.phone = user.phone;
         this.organization = user.organization;
+        this.country = user.country ?? null;
         const now = new Date();
 
         if (user.creditLots && user.creditLots.length > 0) {

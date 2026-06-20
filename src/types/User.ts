@@ -32,6 +32,7 @@ export type UserRecord = {
     role: UserRole;
     phone: string | null;
     organization: string | null;
+    country: string | null;
     credits: number;
     /**
      * Remaining credits per grant, each with its own expiry. When present, this is the source of truth;

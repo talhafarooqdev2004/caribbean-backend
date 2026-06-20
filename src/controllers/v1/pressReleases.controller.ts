@@ -23,6 +23,7 @@ import {
     writePublicPressReleaseDetailCache,
 } from '../../services/apiCache.service.js';
 import { successResponse } from '../../utils/response.util.js';
+import { emailAnchor, emailPublicUrl } from '../../utils/email-html.util.js';
 import { logger } from '../../utils/logger.util.js';
 import type { JwtPayload } from '../../utils/jwt.util.js';
 import type { PressReleaseRecord } from '../../types/PressRelease.js';
@@ -33,6 +34,20 @@ const creditCheckoutSessionRepository = new CreditCheckoutSessionRepository();
 
 const isLivePublicPressRelease = (release: PressReleaseRecord) =>
     release.status === 'approved' && release.paymentStatus === 'paid' && release.isActive !== false;
+
+const buildFeaturedApprovalExtras = (release: PressReleaseRecord) => {
+    if (!release.featured && !release.featuredUpgrade) {
+        return {};
+    }
+
+    const featuredUntil = new Date();
+    featuredUntil.setDate(featuredUntil.getDate() + 7);
+
+    return {
+        featured: true,
+        featuredUntil,
+    };
+};
 
 const canReadPressRelease = (release: PressReleaseRecord, user?: JwtPayload) => {
     if (user?.role === 'admin') {
@@ -65,7 +80,7 @@ const listMeta = (
 };
 
 const sendApprovalEmail = async (release) => {
-    const releaseUrl = `${ENV.FRONTEND_URL}/newsroom/${release.slug}`;
+    const releaseUrl = emailPublicUrl(`/newsroom/${release.slug}`);
 
     await emailService.sendMail({
         to: release.email,
@@ -75,7 +90,7 @@ const sendApprovalEmail = async (release) => {
                 <h1>Congratulations!</h1>
                 <p>Your press release <strong>${release.title}</strong> has been approved.</p>
                 <p>It is now live on Carib Newswire.</p>
-                <p><a href="${releaseUrl}">View your live release</a></p>
+                <p>${emailAnchor(releaseUrl, 'View your live release')}</p>
             </div>
         `,
     });
@@ -91,7 +106,7 @@ const sendRejectionEmail = async (release, reason = '') => {
                 <p>We reviewed your submission <strong>${release.title}</strong>.</p>
                 <p>Unfortunately it did not meet our guidelines.</p>
                 <p><strong>Reason:</strong> ${reason || 'No specific reason was provided.'}</p>
-                <p>Please email <a href="mailto:info@caribnewswire.com">info@caribnewswire.com</a> for support or to resubmit.</p>
+                <p>Please email ${emailAnchor('mailto:info@caribnewswire.com', 'info@caribnewswire.com')} for support or to resubmit.</p>
             </div>
         `,
     });
@@ -160,6 +175,8 @@ export const getPublicPressReleases = async (
     next: NextFunction,
 ) => {
     try {
+        await pressReleaseRepository.expireFeaturedPlacements();
+
         const query = parsePressReleaseQueryFromRequest(req);
         const scopedQuery = {
             ...query,
@@ -412,7 +429,12 @@ export const updatePressReleaseStatus = async (
             throw new ApiError(HTTP_STATUS.UNPROCESSABLE_ENTITY, 'Cannot approve press release until payment is completed');
         }
 
-        const release = await pressReleaseRepository.updateStatus(req.params.id, req.body.status, req.body.rejectionReason);
+        const release = await pressReleaseRepository.updateStatus(
+            req.params.id,
+            req.body.status,
+            req.body.rejectionReason,
+            req.body.status === 'approved' ? buildFeaturedApprovalExtras(existingRelease) : {},
+        );
 
         if (!release) {
             throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Press release not found');
@@ -444,7 +466,12 @@ export const approvePressRelease = async (req: Request<{ id: string }>, res: Res
             throw new ApiError(HTTP_STATUS.UNPROCESSABLE_ENTITY, 'Cannot approve press release until payment is completed');
         }
 
-        const release = await pressReleaseRepository.updateStatus(req.params.id, 'approved');
+        const release = await pressReleaseRepository.updateStatus(
+            req.params.id,
+            'approved',
+            '',
+            buildFeaturedApprovalExtras(existingRelease),
+        );
 
         if (!release) {
             throw new ApiError(HTTP_STATUS.NOT_FOUND, 'Press release not found');

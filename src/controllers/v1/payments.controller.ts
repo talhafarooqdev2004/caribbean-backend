@@ -13,10 +13,12 @@ import { PressReleaseRepository } from '../../repositories/pressRelease.reposito
 import { UserRepository } from '../../repositories/user.repository.js';
 import type { SquareCheckoutInput, SquareProcessInput } from '../../schemas/payment.schema.js';
 import { emailService, scheduleBackgroundEmail } from '../../services/email.service.js';
+import { invalidatePortalUserCache } from '../../services/apiCache.service.js';
 import { squareService } from '../../services/square.service.js';
 import type { PaymentRecord } from '../../types/Payment.js';
 import type { PressReleaseRecord } from '../../types/PressRelease.js';
 import { successResponse } from '../../utils/response.util.js';
+import { emailAnchor, emailPublicUrl } from '../../utils/email-html.util.js';
 import { toObjectId } from '../../utils/mongo.util.js';
 import { CREDIT_WALLET_EXPIRY_MONTHS, walletGrantExpiresAt } from '../../utils/creditLots.util.js';
 import type { UserCreditLotKind } from '../../types/User.js';
@@ -46,6 +48,28 @@ const walletCreditKindForPackage = (packageId: PressReleaseRecord['packageId'] |
     packageId === 'bundle' ? 'bundle' : 'single'
 );
 
+const nullableCheckoutField = (value: string | null | undefined) => {
+    const trimmed = value?.trim();
+    return trimmed ? trimmed : null;
+};
+
+const checkoutBillingMetadata = (body: Pick<SquareProcessInput, 'cardholderName' | 'organization' | 'country'>) => ({
+    ...(body.cardholderName?.trim() ? { cardholderName: body.cardholderName.trim() } : {}),
+    organization: nullableCheckoutField(body.organization ?? undefined),
+    country: nullableCheckoutField(body.country ?? undefined),
+});
+
+const syncCheckoutBillingToUser = async (
+    userId: string,
+    body: Pick<SquareProcessInput, 'organization' | 'country'>,
+) => {
+    await userRepository.update(userId, {
+        organization: nullableCheckoutField(body.organization ?? undefined),
+        country: nullableCheckoutField(body.country ?? undefined),
+    });
+    await invalidatePortalUserCache(userId);
+};
+
 /** Short unique order reference (8 chars, no ambiguous 0/O/1/I). Random from CSPRNG. */
 const ORDER_NUMBER_LENGTH = 8;
 const ORDER_NUMBER_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -61,8 +85,8 @@ const generateOrderNumber = () => {
     return out;
 };
 
-const customerSubmitUrl = () => `${ENV.FRONTEND_URL}/submit-your-press-release`;
-const customerPortalUrl = () => `${ENV.FRONTEND_URL}/portal`;
+const customerSubmitUrl = () => emailPublicUrl('/submit-your-press-release');
+const customerPortalUrl = () => emailPublicUrl('/portal');
 
 /**
  * When `expectCreditsInBody` is true, the email body below will list wallet credits (bundle top-up, etc.).
@@ -73,10 +97,10 @@ const emailPaymentConfirmationIntroHtml = (expectCreditsInBody: boolean) => {
     const portalHref = customerPortalUrl();
 
     if (!expectCreditsInBody) {
-        return `<p style="margin:0 0 16px;line-height:1.55;color:#334155;">This email confirms your <strong>payment</strong> and that your release is <strong>with our editorial team</strong>. Track status anytime in <a href="${portalHref}">My portal</a>. When you are ready for another release, start from <a href="${submitHref}">Submit your press release</a>.</p>`;
+        return `<p style="margin:0 0 16px;line-height:1.55;color:#334155;">This email confirms your <strong>payment</strong> and that your release is <strong>with our editorial team</strong>. Track status anytime in ${emailAnchor(portalHref, 'My portal')}. When you are ready for another release, start from ${emailAnchor(submitHref, 'Submit your press release')}.</p>`;
     }
 
-    return `<p style="margin:0 0 16px;line-height:1.55;color:#334155;">This email is your confirmation. It includes your <strong>release credits</strong> (see below) and <strong>submission instructions</strong>: use <a href="${submitHref}">Submit your press release</a> or <a href="${portalHref}">My portal</a> for next steps.</p>`;
+    return `<p style="margin:0 0 16px;line-height:1.55;color:#334155;">This email is your confirmation. It includes your <strong>release credits</strong> (see below) and <strong>submission instructions</strong>: use ${emailAnchor(submitHref, 'Submit your press release')} or ${emailAnchor(portalHref, 'My portal')} for next steps.</p>`;
 };
 
 const emailOrderNumberHtml = (orderNumber: string) => `<p style="margin:0 0 10px;font-size:14px;line-height:1.45;color:#1e293b;"><strong>Order number:</strong> <span style="font-size:13px;font-weight:600;word-break:break-all;">#${orderNumber}</span></p>`;
@@ -123,7 +147,7 @@ const sendPaymentEmails = async (payment: PaymentRecord, release: PressReleaseRe
     const amount = (payment.amountCents / 100).toFixed(2);
     const packageName = getPackageName(release);
     const portalUrl = customerPortalUrl();
-    const adminUrl = `${ENV.FRONTEND_URL}/admin`;
+    const adminUrl = emailPublicUrl('/admin');
     const walletBonusCredits = Math.max(0, creditsAdded - 1);
 
     await emailService.sendMail({
@@ -143,7 +167,7 @@ const sendPaymentEmails = async (payment: PaymentRecord, release: PressReleaseRe
             ? `<p><strong>Submission:</strong> This purchase covers this press release (no additional wallet credits).</p>`
             : ''}
                 ${walletBonusCredits > 0 ? `<p><strong>Credit validity:</strong> Wallet credits expire ${CREDIT_WALLET_EXPIRY_MONTHS} months after they are added to your account.</p>` : ''}
-                <p>We typically review within 48 hours. You can track status in <a href="${portalUrl}">My portal</a>.</p>
+                <p>We typically review within 48 hours. You can track status in ${emailAnchor(portalUrl, 'My portal')}.</p>
             </div>
         `,
     });
@@ -158,7 +182,7 @@ const sendPaymentEmails = async (payment: PaymentRecord, release: PressReleaseRe
                 <p><strong>Package:</strong> ${packageName}</p>
                 <p><strong>Amount paid:</strong> $${amount}</p>
                 <p><strong>Press release:</strong> ${release.title}</p>
-                <p><a href="${adminUrl}">Open admin dashboard</a></p>
+                <p>${emailAnchor(adminUrl, 'Open admin dashboard')}</p>
             </div>
         `,
     );
@@ -167,7 +191,7 @@ const sendPaymentEmails = async (payment: PaymentRecord, release: PressReleaseRe
 const sendFeaturedCreditSubmissionEmails = async (payment: PaymentRecord, release: PressReleaseRecord, creditsRemaining: number) => {
     const amount = (payment.amountCents / 100).toFixed(2);
     const portalUrl = customerPortalUrl();
-    const adminUrl = `${ENV.FRONTEND_URL}/admin`;
+    const adminUrl = emailPublicUrl('/admin');
 
     await emailService.sendMail({
         to: release.email,
@@ -180,7 +204,7 @@ const sendFeaturedCreditSubmissionEmails = async (payment: PaymentRecord, releas
                 ${emailOrderNumberHtml(payment.orderNumber)}
                 <p><strong>Featured add-on:</strong> $${amount}</p>
                 <p><strong>Release credits:</strong> 1 credit used for this submission (remaining: ${creditsRemaining})</p>
-                <p>Your press release <strong>${release.title}</strong> is submitted for editorial review. Track it in <a href="${portalUrl}">My portal</a>.</p>
+                <p>Your press release <strong>${release.title}</strong> is submitted for editorial review. Track it in ${emailAnchor(portalUrl, 'My portal')}.</p>
             </div>
         `,
     });
@@ -193,7 +217,7 @@ const sendFeaturedCreditSubmissionEmails = async (payment: PaymentRecord, releas
                 <p><strong>Press release:</strong> ${release.title}</p>
                 <p><strong>Featured fee:</strong> $${amount}</p>
                 <p><strong>Order:</strong> #${payment.orderNumber}</p>
-                <p><a href="${adminUrl}">Open admin</a></p>
+                <p>${emailAnchor(adminUrl, 'Open admin')}</p>
             </div>
         `,
     );
@@ -367,9 +391,11 @@ const finalizeSessionAfterCreditPurchase = async (
 
     const release = await pressReleaseRepository.create(persistence);
 
+    const paymentId = payment._id;
+    await paymentRepository.update(paymentId, { releaseId: release._id });
+
     await creditCheckoutSessionRepository.delete(sessionId);
 
-    const paymentId = payment._id;
     const orderNumber = payment.orderNumber;
     const walletCreditsLine = walletCreditsToAdd;
 
@@ -470,8 +496,8 @@ const finalizeCreditOnlyPurchase = async (payment: PaymentRecord, submitterId: s
                 <p><strong>Release credits added:</strong> ${creditsAdded} credit${creditsAdded === 1 ? '' : 's'}</p>
                 <p><strong>Amount Paid:</strong> $${amount}</p>
                 ${creditWalletExpiryHtml}
-                <p>Each submission uses one credit. Start here: <a href="${submitUrl}">Submit your press release</a>.</p>
-                <p><a href="${dashboardUrl}">My portal</a></p>
+                <p>Each submission uses one credit. Start here: ${emailAnchor(submitUrl, 'Submit your press release')}.</p>
+                <p>${emailAnchor(dashboardUrl, 'My portal')}</p>
             </div>
         `,
         });
@@ -482,8 +508,8 @@ const finalizeCreditOnlyPurchase = async (payment: PaymentRecord, submitterId: s
 
 const sendPaymentFailedEmail = async (release: PressReleaseRecord | null, email: string) => {
     const checkoutHref = release
-        ? `${ENV.FRONTEND_URL}/checkout?releaseId=${release._id.toHexString()}`
-        : `${ENV.FRONTEND_URL}/checkout`;
+        ? emailPublicUrl(`/checkout?releaseId=${release._id.toHexString()}`)
+        : emailPublicUrl('/checkout');
 
     await emailService.sendMail({
         to: email,
@@ -492,8 +518,8 @@ const sendPaymentFailedEmail = async (release: PressReleaseRecord | null, email:
             <div style="font-family: Arial, sans-serif; color: #274060;">
                 <p>Your payment could not be processed.</p>
                 <p>Please try again.</p>
-                <p><a href="${checkoutHref}">Go to Checkout</a></p>
-                <p>If the problem persists, contact <a href="mailto:info@caribnewswire.com">info@caribnewswire.com</a>.</p>
+                <p>${emailAnchor(checkoutHref, 'Go to Checkout')}</p>
+                <p>If the problem persists, contact ${emailAnchor('mailto:info@caribnewswire.com', 'info@caribnewswire.com')}.</p>
             </div>
         `,
     });
@@ -552,7 +578,7 @@ export const createSquareCheckout = async (
         }
 
         res.status(HTTP_STATUS.CREATED).json(successResponse('Square checkout created successfully', {
-            payment: PaymentResponseDTO.fromModel(payment),
+            payment: PaymentResponseDTO.fromModel(payment, release),
             checkoutUrl: paymentLink.checkoutUrl,
         }));
     } catch (error) {
@@ -652,13 +678,22 @@ export const processSquarePayment = async (
                     creditPurchase: true,
                     quantity,
                     submitterId: req.user.id,
-                    cardholderName: req.body.cardholderName,
+                    featuredAddon,
+                    ...checkoutBillingMetadata(req.body),
                     ...(pendingCheckoutSessionOid ? { pendingCreditCheckoutSessionId: pendingCheckoutSessionOid.toHexString() } : {}),
                 },
             });
 
+            let paymentForResponse = payment;
+
             if (squarePayment.status === 'paid') {
                 await finalizeCreditOnlyPurchase(payment, req.user.id, customerEmail);
+                await syncCheckoutBillingToUser(req.user.id, req.body);
+                const refreshed = await paymentRepository.findById(payment._id);
+
+                if (refreshed) {
+                    paymentForResponse = refreshed;
+                }
             }
 
             if (squarePayment.status === 'failed') {
@@ -669,9 +704,13 @@ export const processSquarePayment = async (
                 );
             }
 
+            const linkedRelease = paymentForResponse.releaseId
+                ? await pressReleaseRepository.findById(paymentForResponse.releaseId)
+                : null;
+
             res.status(HTTP_STATUS.OK).json(successResponse('Payment processed successfully', {
-                payment: PaymentResponseDTO.fromModel(payment),
-                orderId: payment.orderNumber,
+                payment: PaymentResponseDTO.fromModel(paymentForResponse, linkedRelease),
+                orderId: paymentForResponse.orderNumber,
             }));
 
             return;
@@ -729,7 +768,7 @@ export const processSquarePayment = async (
             metadata: {
                 ...squarePayment.raw,
                 featuredAddon: release.featuredUpgrade,
-                cardholderName: req.body.cardholderName,
+                ...checkoutBillingMetadata(req.body),
             },
         });
 
@@ -741,6 +780,10 @@ export const processSquarePayment = async (
 
         if (squarePayment.status === 'paid') {
             await finalizePaidSubmission(payment);
+
+            if (req.user) {
+                await syncCheckoutBillingToUser(req.user.id, req.body);
+            }
         }
 
         if (squarePayment.status === 'failed') {
@@ -753,7 +796,7 @@ export const processSquarePayment = async (
         }
 
         res.status(HTTP_STATUS.OK).json(successResponse('Payment processed successfully', {
-            payment: PaymentResponseDTO.fromModel(payment),
+            payment: PaymentResponseDTO.fromModel(payment, release),
             orderId: payment.orderNumber,
         }));
     } catch (error) {
@@ -776,7 +819,7 @@ export const getLatestPaymentByReleaseId = async (
         const release = payment.releaseId ? await pressReleaseRepository.findById(payment.releaseId) : null;
 
         res.status(HTTP_STATUS.OK).json(successResponse('Payment retrieved successfully', {
-            payment: PaymentResponseDTO.fromModel(payment),
+            payment: PaymentResponseDTO.fromModel(payment, release),
             release: release ? PressReleaseResponseDTO.fromModel(release) : null,
         }));
     } catch (error) {
@@ -799,7 +842,7 @@ export const getPaymentByOrderNumber = async (
         const release = payment.releaseId ? await pressReleaseRepository.findById(payment.releaseId) : null;
 
         res.status(HTTP_STATUS.OK).json(successResponse('Payment retrieved successfully', {
-            payment: PaymentResponseDTO.fromModel(payment),
+            payment: PaymentResponseDTO.fromModel(payment, release),
             release: release ? PressReleaseResponseDTO.fromModel(release) : null,
         }));
     } catch (error) {

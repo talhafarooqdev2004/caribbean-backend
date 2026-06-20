@@ -10,6 +10,7 @@ export class PressReleaseStoreRequestDTO {
     readonly island: string;
     readonly preferredDistributionDate: string;
     readonly content: string;
+    readonly summary: string;
     readonly targetRegions: string;
     readonly specialInstructions: string;
     readonly outboundLink: string;
@@ -27,6 +28,7 @@ export class PressReleaseStoreRequestDTO {
         this.category = data.category;
         this.island = data.island || data.region || data.targetRegions || 'Regional';
         this.preferredDistributionDate = data.preferredDistributionDate || '';
+        this.summary = typeof data.summary === 'string' ? data.summary.trim() : '';
         this.content = data.pressReleaseContent || data.content;
         this.targetRegions = data.targetRegions || '';
         this.specialInstructions = data.specialInstructions || '';
@@ -45,7 +47,7 @@ export class PressReleaseStoreRequestDTO {
             phoneNumber: this.phoneNumber,
             organization: this.organization,
             title: this.title,
-            summary: '',
+            summary: this.summary,
             content: this.content,
             category: this.category,
             island: this.island,
@@ -58,6 +60,8 @@ export class PressReleaseStoreRequestDTO {
             packageId: this.packageId,
             featuredUpgrade: this.featuredUpgrade,
             featured: this.featuredUpgrade,
+            featuredPriority: 0,
+            featuredUntil: null,
             rejectionReason: null,
             amountCents,
             status: 'draft' as const,

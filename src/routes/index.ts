@@ -8,7 +8,9 @@ import paymentRoutes from './payment.routes.js';
 import paymentGatewayRoutes from './paymentGateway.routes.js';
 import appConfigRoutes from './appConfig.routes.js';
 import contactMessageRoutes from './contactMessage.routes.js';
+import newsletterSubscriberRoutes from './newsletterSubscriber.routes.js';
 import emailDigestRoutes from './emailDigest.routes.js';
+import networkStatsRoutes from './networkStats.routes.js';
 import siteAccessRoutes from './siteAccess.routes.js';
 import webhookRoutes from './webhook.routes.js';
 import adminAnalyticsRoutes from './adminAnalytics.routes.js';
@@ -20,6 +22,7 @@ import adminPressReleaseRoutes from './adminPressRelease.routes.js';
 const router = express.Router();
 
 router.use('/site-access', siteAccessRoutes);
+router.use('/network-stats', networkStatsRoutes);
 router.use('/auth', authRoutes);
 router.use('/user', submitterRoutes);
 router.use('/admin/users', userRoutes);
@@ -36,6 +39,7 @@ router.use('/admin/payment-gateways', paymentGatewayRoutes);
 router.use('/admin/app-configs', appConfigRoutes);
 router.use('/contact-messages', contactMessageRoutes);
 router.use('/admin/contact-messages', contactMessageRoutes);
+router.use('/newsletter', newsletterSubscriberRoutes);
 router.use('/admin/email-digests', emailDigestRoutes);
 router.use('/webhooks', webhookRoutes);
 

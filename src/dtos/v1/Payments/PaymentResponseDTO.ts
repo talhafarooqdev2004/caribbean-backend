@@ -16,10 +16,11 @@ export class PaymentResponseDTO {
     readonly squareCheckoutUrl: string | null;
     readonly squarePaymentId: string | null;
     readonly customerEmail: string | null;
+    readonly featuredUpgrade: boolean;
     readonly createdAt: string;
     readonly updatedAt: string;
 
-    constructor(record: PaymentRecord) {
+    constructor(record: PaymentRecord, release?: { featuredUpgrade?: boolean } | null) {
         this.id = record._id.toHexString();
         this.releaseId = record.releaseId?.toHexString() ?? null;
         this.provider = record.provider;
@@ -35,11 +36,12 @@ export class PaymentResponseDTO {
         this.squareCheckoutUrl = record.squareCheckoutUrl;
         this.squarePaymentId = record.squarePaymentId;
         this.customerEmail = record.customerEmail;
+        this.featuredUpgrade = Boolean(release?.featuredUpgrade ?? record.metadata?.featuredAddon);
         this.createdAt = record.createdAt.toISOString();
         this.updatedAt = record.updatedAt.toISOString();
     }
 
-    static fromModel(record: PaymentRecord): PaymentResponseDTO {
-        return new this(record);
+    static fromModel(record: PaymentRecord, release?: { featuredUpgrade?: boolean } | null): PaymentResponseDTO {
+        return new this(record, release);
     }
 }

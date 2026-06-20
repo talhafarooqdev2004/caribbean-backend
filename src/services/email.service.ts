@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import { ENV } from '../config/env.js';
+import { htmlToPlainTextEmail, wrapEmailHtml } from '../utils/email-html.util.js';
 import { logger } from '../utils/logger.util.js';
 
 class EmailService {
@@ -43,12 +44,20 @@ class EmailService {
         }
 
         try {
+            const html = wrapEmailHtml(options.html);
+
+            if (ENV.NODE_ENV === 'production' && /href=["']https?:\/\/localhost/i.test(html)) {
+                logger.warn(
+                    `Email "${options.subject}" contains localhost links — set FRONTEND_URL to your public site (e.g. https://caribnewswire.com).`,
+                );
+            }
+
             const info = await this.transporter.sendMail({
                 from: `"Carib Newswire" <${ENV.SMTP_USER || ENV.ADMIN_EMAIL}>`,
                 to: options.to,
                 subject: options.subject,
-                html: options.html,
-                text: options.text || options.html.replace(/<[^>]*>/g, ' '),
+                html,
+                text: options.text ?? htmlToPlainTextEmail(html),
             });
 
             if (options.logDeliveryDetail) {

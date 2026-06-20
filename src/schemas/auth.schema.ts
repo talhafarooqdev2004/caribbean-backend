@@ -39,7 +39,7 @@ export const RegisterSchema = z.object({
     location: z.preprocess(normalizeString, z.string().max(160).optional().default('')),
     primaryBeat: z.preprocess(normalizeString, z.string().max(160).optional().default('')),
     bio: z.preprocess(normalizeString, z.string().max(1000).optional().default('')),
-    digestOptIn: z.coerce.boolean().optional().default(true),
+    digestOptIn: z.coerce.boolean().optional().default(false),
 }).refine((value) => value.password === value.confirmPassword, {
     message: 'Passwords must match',
     path: ['confirmPassword'],
@@ -51,6 +51,7 @@ export const UpdateMeSchema = z.object({
     email: z.preprocess(normalizeEmail, z.string().email().max(254).optional()),
     phone: z.preprocess(normalizeString, z.string().max(40).optional()),
     organization: z.preprocess(normalizeString, z.string().max(140).optional()),
+    country: z.preprocess(normalizeString, z.string().max(160).optional()),
 }).refine((value) => Object.keys(value).length > 0, {
     message: 'At least one field is required',
 });
