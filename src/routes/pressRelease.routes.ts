@@ -37,7 +37,7 @@ router.delete('/admin/:id', authMiddleware, authorize('admin'), apiLimiter, dele
 router.post(
     '/credit-checkout-session',
     apiLimiter,
-    optionalAuth,
+    authMiddleware,
     pressReleaseUpload.fields([
         { name: 'coverPhoto', maxCount: 1 },
         { name: 'document', maxCount: 1 },

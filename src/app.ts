@@ -15,6 +15,8 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
+app.set('trust proxy', 1);
+
 app.use(cors({
     origin: (origin, callback) => {
         if (!origin) {

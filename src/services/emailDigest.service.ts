@@ -17,8 +17,8 @@ const newsletterSubscriberRepository = new NewsletterSubscriberRepository();
 const appConfigRepository = new AppConfigRepository();
 
 const DIGEST_RELEASE_LIMIT = 10; // max stories included in each digest email body
-/** Max opted-in recipients who receive each digest send (stable order: email ascending). */
-const DIGEST_RECIPIENT_LIMIT = 10;
+/** Send every active subscriber, but batch SMTP calls to avoid a large simultaneous burst. */
+const DIGEST_SEND_BATCH_SIZE = 25;
 const SUMMARY_MAX_LENGTH = 280;
 
 type DigestRecipient = {
@@ -131,43 +131,19 @@ export type DigestSendResult = {
     recipients: number;
     releases: number;
     sent: number;
+    failed: number;
     skipped: boolean;
     skipReason?: 'no_recipients' | 'no_releases';
 };
 
-export const sendJournalistDigest = async (cadence: 'daily' | '3x-weekly'): Promise<DigestSendResult> => {
-    const [digestRecipients, releases] = await Promise.all([
-        buildDigestRecipients(cadence),
-        pressReleaseRepository.findAll({
-            status: 'approved',
-            paymentStatus: 'paid',
-            isActive: true,
-            sort: 'featuredFirst',
-            limit: DIGEST_RELEASE_LIMIT,
-        }),
-    ]);
-
-    if (digestRecipients.length === 0 || releases.length === 0) {
-        return {
-            recipients: 0,
-            releases: releases.length,
-            sent: 0,
-            skipped: true,
-            skipReason: digestRecipients.length === 0 ? 'no_recipients' : 'no_releases',
-        };
-    }
-
-    const limitedRecipients = [...digestRecipients]
-        .sort((a, b) => a.email.localeCompare(b.email, 'en'))
-        .slice(0, DIGEST_RECIPIENT_LIMIT);
-
-    const digestDateLabel = formatDigestDate();
-    const storyCount = releases.length;
-    const storyWord = storyCount === 1 ? 'Story' : 'Stories';
-    const subject = `Caribbean News Digest - ${storyCount} ${storyWord} - ${digestDateLabel}`;
-
-    const results = await Promise.allSettled(
-        limitedRecipients.map(async (recipient) => {
+async function sendDigestBatch(
+    recipients: DigestRecipient[],
+    releases: PressReleaseRecord[],
+    subject: string,
+    digestDateLabel: string,
+) {
+    return Promise.allSettled(
+        recipients.map(async (recipient) => {
             if (recipient.kind === 'user' && recipient.user) {
                 const journalist = recipient.user;
 
@@ -196,6 +172,47 @@ export const sendJournalistDigest = async (cadence: 'daily' | '3x-weekly'): Prom
             });
         }),
     );
+}
+
+export const sendJournalistDigest = async (cadence: 'daily' | '3x-weekly'): Promise<DigestSendResult> => {
+    const [digestRecipients, releases] = await Promise.all([
+        buildDigestRecipients(cadence),
+        pressReleaseRepository.findAll({
+            status: 'approved',
+            paymentStatus: 'paid',
+            isActive: true,
+            sort: 'featuredFirst',
+            limit: DIGEST_RELEASE_LIMIT,
+        }),
+    ]);
+
+    if (digestRecipients.length === 0 || releases.length === 0) {
+        return {
+            recipients: 0,
+            releases: releases.length,
+            sent: 0,
+            failed: 0,
+            skipped: true,
+            skipReason: digestRecipients.length === 0 ? 'no_recipients' : 'no_releases',
+        };
+    }
+
+    const recipients = [...digestRecipients]
+        .sort((a, b) => a.email.localeCompare(b.email, 'en'));
+
+    const digestDateLabel = formatDigestDate();
+    const storyCount = releases.length;
+    const storyWord = storyCount === 1 ? 'Story' : 'Stories';
+    const subject = `Caribbean News Digest - ${storyCount} ${storyWord} - ${digestDateLabel}`;
+
+    const results: PromiseSettledResult<boolean>[] = [];
+
+    for (let start = 0; start < recipients.length; start += DIGEST_SEND_BATCH_SIZE) {
+        const batch = recipients.slice(start, start + DIGEST_SEND_BATCH_SIZE);
+        results.push(...await sendDigestBatch(batch, releases, subject, digestDateLabel));
+    }
+
+    const sent = results.filter((result) => result.status === 'fulfilled' && result.value).length;
 
     await appConfigRepository.updateOrCreate(
         APP_CONFIG_KEYS.EMAIL_DIGEST_LAST_SENT_AT,
@@ -204,9 +221,10 @@ export const sendJournalistDigest = async (cadence: 'daily' | '3x-weekly'): Prom
     );
 
     return {
-        recipients: limitedRecipients.length,
+        recipients: recipients.length,
         releases: storyCount,
-        sent: results.filter((result) => result.status === 'fulfilled' && result.value).length,
+        sent,
+        failed: recipients.length - sent,
         skipped: false,
     };
 };
