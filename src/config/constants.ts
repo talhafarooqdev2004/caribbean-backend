@@ -40,5 +40,7 @@ export const APP_CONFIG_KEYS = {
     SQUARE_TEST_MODE: 'square_test_mode',
     EMAIL_DIGEST_FREQUENCY: 'email_digest_frequency',
     EMAIL_DIGEST_LAST_SENT_AT: 'email_digest_last_sent_at',
+    EMAIL_DIGEST_LAST_INCLUDED_RELEASE_AT: 'email_digest_last_included_release_at',
+    EMAIL_DIGEST_LAST_INCLUDED_RELEASE_ID: 'email_digest_last_included_release_id',
     SITE_IP_ALLOWLIST: 'site_ip_allowlist',
 };

@@ -29,6 +29,11 @@ export type PressReleaseQuery = {
     page?: number;
 };
 
+export type DigestReleaseMarker = {
+    publishedAt: Date;
+    releaseId?: ObjectId | null;
+};
+
 const collection = () => getDb().collection<PressReleaseRecord>('press_releases');
 
 const buildSummary = (content: string) => {
@@ -131,6 +136,46 @@ export class PressReleaseRepository {
         const skip = (page - 1) * limit;
 
         return collection().find(filter).sort(sort).skip(skip).limit(limit).toArray();
+    }
+
+    async findDigestCandidatesAfterMarker(marker: DigestReleaseMarker | null, limit: number) {
+        const cappedLimit = Math.min(Math.max(1, limit), 100);
+        const pipeline: object[] = [
+            {
+                $match: {
+                    status: 'approved',
+                    paymentStatus: 'paid',
+                    isActive: { $ne: false },
+                },
+            },
+            {
+                $addFields: {
+                    digestPublishedAt: { $ifNull: ['$publishedAt', '$createdAt'] },
+                },
+            },
+        ];
+
+        if (marker) {
+            pipeline.push({
+                $match: {
+                    $or: [
+                        { digestPublishedAt: { $gt: marker.publishedAt } },
+                        ...(marker.releaseId ? [{
+                            digestPublishedAt: marker.publishedAt,
+                            _id: { $gt: marker.releaseId },
+                        }] : []),
+                    ],
+                },
+            });
+        }
+
+        pipeline.push(
+            { $sort: { digestPublishedAt: 1, _id: 1 } },
+            { $limit: cappedLimit },
+            { $project: { digestPublishedAt: 0 } },
+        );
+
+        return collection().aggregate<PressReleaseRecord>(pipeline).toArray();
     }
 
     async countByQuery(query: PressReleaseQuery = {}) {

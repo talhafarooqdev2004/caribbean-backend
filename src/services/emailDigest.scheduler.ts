@@ -25,14 +25,7 @@ const runDigestIfFrequency = async (frequency: 'daily' | '3x-weekly') => {
         return;
     }
 
-    const result = await sendJournalistDigest(frequency);
-
-    if (result.skipped) {
-        logger.info(`Journalist digest scheduler skipped: ${JSON.stringify(result)}`);
-        return;
-    }
-
-    logger.info(`Journalist digest sent by scheduler: ${JSON.stringify(result)}`);
+    await sendJournalistDigest(frequency, 'scheduler');
 };
 
 export const startEmailDigestScheduler = () => {

@@ -6,10 +6,12 @@ import { emailService } from './email.service.js';
 import { ENV } from '../config/env.js';
 import { emailAnchor, emailPublicUrl } from '../utils/email-html.util.js';
 import crypto from 'crypto';
+import { ObjectId } from 'mongodb';
 import { AppConfigRepository } from '../repositories/appConfig.repository.js';
 import { APP_CONFIG_KEYS } from '../config/constants.js';
 import type { UserRecord } from '../types/User.js';
 import type { NewsletterSubscriberRecord } from '../types/NewsletterSubscriber.js';
+import { logger } from '../utils/logger.util.js';
 
 const pressReleaseRepository = new PressReleaseRepository();
 const userRepository = new UserRepository();
@@ -27,6 +29,13 @@ type DigestRecipient = {
     kind: 'user' | 'newsletter';
     user?: UserRecord;
     subscriber?: NewsletterSubscriberRecord;
+};
+
+type DigestRunSource = 'manual' | 'scheduler';
+
+type DigestReleaseMarker = {
+    publishedAt: Date;
+    releaseId?: ObjectId | null;
 };
 
 const formatDigestDate = () => new Date().toLocaleDateString('en-US');
@@ -133,8 +142,60 @@ export type DigestSendResult = {
     sent: number;
     failed: number;
     skipped: boolean;
-    skipReason?: 'no_recipients' | 'no_releases';
+    skipReason?: 'no_recipients' | 'no_releases' | 'no_new_releases';
+    lastIncludedReleaseAt?: string | null;
+    lastIncludedReleaseId?: string | null;
 };
+
+function parseDigestMarkerDate(value: unknown) {
+    if (typeof value !== 'string' || !value.trim()) {
+        return null;
+    }
+
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function parseDigestMarkerId(value: unknown) {
+    if (typeof value !== 'string' || !ObjectId.isValid(value)) {
+        return null;
+    }
+
+    return new ObjectId(value);
+}
+
+async function getLastDigestReleaseMarker(): Promise<DigestReleaseMarker | null> {
+    const [lastIncludedAtConfig, lastIncludedIdConfig, lastSentConfig] = await Promise.all([
+        appConfigRepository.findByKey(APP_CONFIG_KEYS.EMAIL_DIGEST_LAST_INCLUDED_RELEASE_AT),
+        appConfigRepository.findByKey(APP_CONFIG_KEYS.EMAIL_DIGEST_LAST_INCLUDED_RELEASE_ID),
+        appConfigRepository.findByKey(APP_CONFIG_KEYS.EMAIL_DIGEST_LAST_SENT_AT),
+    ]);
+
+    const lastIncludedAt = parseDigestMarkerDate(lastIncludedAtConfig?.value);
+
+    if (lastIncludedAt) {
+        return {
+            publishedAt: lastIncludedAt,
+            releaseId: parseDigestMarkerId(lastIncludedIdConfig?.value),
+        };
+    }
+
+    const legacyLastSentAt = parseDigestMarkerDate(lastSentConfig?.value);
+
+    return legacyLastSentAt ? { publishedAt: legacyLastSentAt, releaseId: null } : null;
+}
+
+function digestMarkerForRelease(release: PressReleaseRecord): DigestReleaseMarker {
+    return {
+        publishedAt: release.publishedAt ?? release.createdAt,
+        releaseId: release._id,
+    };
+}
+
+function logDigestRun(source: DigestRunSource, cadence: 'daily' | '3x-weekly', result: DigestSendResult) {
+    const status = result.skipped ? 'skipped' : 'sent';
+    logger.info(`Journalist digest ${status}: ${JSON.stringify({ source, cadence, ...result })}`);
+}
 
 async function sendDigestBatch(
     recipients: DigestRecipient[],
@@ -174,27 +235,32 @@ async function sendDigestBatch(
     );
 }
 
-export const sendJournalistDigest = async (cadence: 'daily' | '3x-weekly'): Promise<DigestSendResult> => {
-    const [digestRecipients, releases] = await Promise.all([
+export const sendJournalistDigest = async (
+    cadence: 'daily' | '3x-weekly',
+    source: DigestRunSource = 'manual',
+): Promise<DigestSendResult> => {
+    const [digestRecipients, marker] = await Promise.all([
         buildDigestRecipients(cadence),
-        pressReleaseRepository.findAll({
-            status: 'approved',
-            paymentStatus: 'paid',
-            isActive: true,
-            sort: 'featuredFirst',
-            limit: DIGEST_RELEASE_LIMIT,
-        }),
+        getLastDigestReleaseMarker(),
     ]);
+    const releases = await pressReleaseRepository.findDigestCandidatesAfterMarker(marker, DIGEST_RELEASE_LIMIT);
 
     if (digestRecipients.length === 0 || releases.length === 0) {
-        return {
-            recipients: 0,
+        const result: DigestSendResult = {
+            recipients: digestRecipients.length,
             releases: releases.length,
             sent: 0,
             failed: 0,
             skipped: true,
-            skipReason: digestRecipients.length === 0 ? 'no_recipients' : 'no_releases',
+            skipReason: digestRecipients.length === 0
+                ? 'no_recipients'
+                : marker
+                    ? 'no_new_releases'
+                    : 'no_releases',
         };
+
+        logDigestRun(source, cadence, result);
+        return result;
     }
 
     const recipients = [...digestRecipients]
@@ -214,17 +280,39 @@ export const sendJournalistDigest = async (cadence: 'daily' | '3x-weekly'): Prom
 
     const sent = results.filter((result) => result.status === 'fulfilled' && result.value).length;
 
-    await appConfigRepository.updateOrCreate(
-        APP_CONFIG_KEYS.EMAIL_DIGEST_LAST_SENT_AT,
-        new Date().toISOString(),
-        'Timestamp of the latest journalist digest send.',
-    );
+    const lastIncludedRelease = releases[releases.length - 1]!;
+    const lastIncludedMarker = digestMarkerForRelease(lastIncludedRelease);
 
-    return {
+    if (sent > 0) {
+        await Promise.all([
+            appConfigRepository.updateOrCreate(
+                APP_CONFIG_KEYS.EMAIL_DIGEST_LAST_SENT_AT,
+                new Date().toISOString(),
+                'Timestamp of the latest journalist digest send.',
+            ),
+            appConfigRepository.updateOrCreate(
+                APP_CONFIG_KEYS.EMAIL_DIGEST_LAST_INCLUDED_RELEASE_AT,
+                lastIncludedMarker.publishedAt.toISOString(),
+                'Publish/create timestamp of the newest release included in the latest sent digest.',
+            ),
+            appConfigRepository.updateOrCreate(
+                APP_CONFIG_KEYS.EMAIL_DIGEST_LAST_INCLUDED_RELEASE_ID,
+                lastIncludedMarker.releaseId?.toHexString() ?? null,
+                'ID tie-breaker for the newest release included in the latest sent digest.',
+            ),
+        ]);
+    }
+
+    const result: DigestSendResult = {
         recipients: recipients.length,
         releases: storyCount,
         sent,
         failed: recipients.length - sent,
         skipped: false,
+        lastIncludedReleaseAt: sent > 0 ? lastIncludedMarker.publishedAt.toISOString() : null,
+        lastIncludedReleaseId: sent > 0 ? lastIncludedMarker.releaseId?.toHexString() ?? null : null,
     };
+
+    logDigestRun(source, cadence, result);
+    return result;
 };

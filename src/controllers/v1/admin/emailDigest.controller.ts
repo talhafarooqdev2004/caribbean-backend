@@ -7,9 +7,11 @@ import { successResponse } from '../../../utils/response.util.js';
 export const sendDigestNow = async (_req: Request, res: Response, next: NextFunction) => {
     try {
         const cadence = await getEmailDigestFrequency();
-        const result = await sendJournalistDigest(cadence);
+        const result = await sendJournalistDigest(cadence, 'manual');
         const message = result.skipped
-            ? 'Digest was not sent (no opted-in users or no approved releases).'
+            ? result.skipReason === 'no_new_releases'
+                ? 'Digest was not sent because there are no new approved releases since the last send.'
+                : 'Digest was not sent (no opted-in users or no approved releases).'
             : 'Digest sent successfully';
         res.status(HTTP_STATUS.OK).json(successResponse(message, result));
     } catch (error) {
